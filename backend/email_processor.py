@@ -25,10 +25,7 @@ def ingest_emails(email_dir: str = "./data/test_emails"):
     embedding_fn = embedding_functions.DefaultEmbeddingFunction()
 
     # Create or load collection
-    collection = chroma.get_or_create_collection(
-        name="emails",
-        embedding_function=embedding_fn
-    )
+    collection = chroma.get_or_create_collection(name="emails")
 
     # Loop through and ingest all text files
     count = 0
@@ -41,7 +38,7 @@ def ingest_emails(email_dir: str = "./data/test_emails"):
             content = f.read().strip()
 
         if not content:
-            print(f"⚠️ Skipped empty file: {filename}")
+            print(f" Skipped empty file: {filename}")
             continue
 
         cursor.execute("INSERT INTO emails (filename, content) VALUES (?, ?)", (filename, content))
@@ -55,15 +52,15 @@ def ingest_emails(email_dir: str = "./data/test_emails"):
                 ids=[str(email_id)]
             )
             count += 1
-            print(f"✅ Ingested: {filename}")
+            print(f" Ingested: {filename}")
         except Exception as e:
-            print(f"❌ Failed to embed {filename}: {e}")
+            print(f" Failed to embed {filename}: {e}")
 
     conn.commit()
-    print(f"📦 Ingestion complete. ({count} files embedded)")
+    print(f" Ingestion complete. ({count} files embedded)")
 
-    # ✅ Debug: show how many items exist in Chroma
-    print(f"🧩 Collection '{collection.name}' now contains {collection.count()} items.")
+    #  Debug: show how many items exist in Chroma
+    print(f" Collection '{collection.name}' now contains {collection.count()} items.")
 
 
 def search_emails(query: str, n_results: int = 3):
@@ -74,20 +71,18 @@ def search_emails(query: str, n_results: int = 3):
     chroma = get_client()
     embedding_fn = embedding_functions.DefaultEmbeddingFunction()
 
-    collection = chroma.get_or_create_collection(
-        name="emails",
-        embedding_function=embedding_fn
-    )
+    collection = chroma.get_or_create_collection(name="emails")
+
 
     try:
         results = collection.query(query_texts=[query], n_results=n_results)
     except Exception as e:
-        print(f"❌ Query failed: {e}")
+        print(f" Query failed: {e}")
         return []
 
     # Defensive unpacking
     if not results:
-        print("⚠️ No results object returned.")
+        print(" No results object returned.")
         return []
 
     ids = (results.get("ids") or [[]])[0]
@@ -95,7 +90,7 @@ def search_emails(query: str, n_results: int = 3):
     metas_list = (results.get("metadatas") or [[]])[0]
 
     if not ids:
-        print("⚠️ No results found in Chroma for this query.")
+        print(" No results found in Chroma for this query.")
         return []
 
     docs = []
@@ -115,9 +110,11 @@ def search_emails(query: str, n_results: int = 3):
             "content": content
         })
 
-    print(f"🔎 Found {len(docs)} result(s) for query: '{query}'")
+    print(f" Found {len(docs)} result(s) for query: '{query}'")
     return docs
 
 
 if __name__ == "__main__":
-    ingest_emails()
+    ingest_emails(email_dir="./data/outlook_emails")
+
+
