@@ -5,9 +5,6 @@ from chromadb.utils import embedding_functions
 
 
 def ingest_emails(email_dir: str = "./data/test_emails"):
-    """
-    Reads all .txt emails, stores content in SQLite, and embeds them in Chroma.
-    """
     chroma = get_client()
     conn = get_conn()
     cursor = conn.cursor()
@@ -21,13 +18,13 @@ def ingest_emails(email_dir: str = "./data/test_emails"):
         )
     """)
 
-    # Add a default embedding function (required)
+    # Add a default embedding function - later will be sentenceTransformmers.
     embedding_fn = embedding_functions.DefaultEmbeddingFunction()
 
     # Create or load collection
     collection = chroma.get_or_create_collection(name="emails")
 
-    # Loop through and ingest all text files
+    # Loop and ingest files
     count = 0
     for filename in os.listdir(email_dir):
         if not filename.endswith(".txt"):
@@ -44,7 +41,7 @@ def ingest_emails(email_dir: str = "./data/test_emails"):
         cursor.execute("INSERT INTO emails (filename, content) VALUES (?, ?)", (filename, content))
         email_id = cursor.lastrowid
 
-        # Add embedding to Chroma
+        # Add embed to Chroma
         try:
             collection.add(
                 documents=[content],
@@ -59,15 +56,11 @@ def ingest_emails(email_dir: str = "./data/test_emails"):
     conn.commit()
     print(f" Ingestion complete. ({count} files embedded)")
 
-    #  Debug: show how many items exist in Chroma
+    #  show if items exist in chroma
     print(f" Collection '{collection.name}' now contains {collection.count()} items.")
 
 
 def search_emails(query: str, n_results: int = 3):
-    """
-    Searches for top relevant emails given a natural language query.
-    Handles missing or None fields safely.
-    """
     chroma = get_client()
     embedding_fn = embedding_functions.DefaultEmbeddingFunction()
 
@@ -80,7 +73,7 @@ def search_emails(query: str, n_results: int = 3):
         print(f" Query failed: {e}")
         return []
 
-    # Defensive unpacking
+    # Defensive unpack
     if not results:
         print(" No results object returned.")
         return []

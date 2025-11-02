@@ -2,7 +2,7 @@ import os
 import requests
 from msal import PublicClientApplication
 
-# CONFIG
+# config
 CLIENT_ID = "81dcae7c-55a9-4e4e-86e1-e364b25fc990"
 TENANT_ID = "common"
 AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
