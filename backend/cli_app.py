@@ -20,7 +20,7 @@ def main():
 
         # from resultst generate an answer
         context = "\n\n".join([f"Email: {r['filename']}\n{r['content']}" for r in results])
-        prompt = f"Use the following emails to answer the question.\n\n{context}\n\nQuestion: {query}\nAnswer briefly and cite filenames."
+        prompt = f"Use the following emails to answer the question.\n\n{context}\n\nQuestion: {query}\nAnswer ensuring that you cite source email filenames."
 
         print(" Thinking...\n")
         answer = generate(prompt)

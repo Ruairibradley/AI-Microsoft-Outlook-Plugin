@@ -3,7 +3,7 @@ import requests
 import json
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 
 
 def generate(prompt: str, max_tokens: int = 150) -> str:
@@ -19,7 +19,7 @@ def generate(prompt: str, max_tokens: int = 150) -> str:
                 "temperature": 0.4,
                 "top_p": 0.9
             }
-            # limit total generation
+            # limit generation
             },
             stream=True,
             timeout=120,
@@ -28,12 +28,12 @@ def generate(prompt: str, max_tokens: int = 150) -> str:
 
             output_text = ""
 
-            # Stream line-by-line
+            # make text appear line by line rather than all at once - like how llms do
             for line in response.iter_lines():
                 if not line:
                     continue
 
-                # Each line is a JSON object with "response" or "done"
+
                 try:
                     data = json.loads(line.decode("utf-8"))
                 except json.JSONDecodeError:
