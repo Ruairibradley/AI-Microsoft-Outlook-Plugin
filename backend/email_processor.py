@@ -2,6 +2,10 @@ import os
 from chroma_service import get_client
 from database import get_conn
 from chromadb.utils import embedding_functions
+import time
+from timing_utils import timer
+import json
+import os
 
 
 def ingest_emails(email_dir: str = "./data/test_emails"):
@@ -60,21 +64,23 @@ def ingest_emails(email_dir: str = "./data/test_emails"):
     print(f" Collection '{collection.name}' now contains {collection.count()} items.")
 
 
-def search_emails(query: str, n_results: int = 3):
+def search_emails(query: str, n_results: int = 3, log_timings = False):
     chroma = get_client()
     embedding_fn = embedding_functions.DefaultEmbeddingFunction()
 
     collection = chroma.get_or_create_collection(name="emails")
 
 
-    try:
-        results = collection.query(query_texts=[query], n_results=n_results)
-    except Exception as e:
-        print(f" Query failed: {e}")
-        return []
+    timings ={}
+    with timer(timings, "vector_search_ms"):
+        try:
+            results = collection.query(query_texts=[query], n_results=n_results)
+        except Exception as e:
+            print(f" Query failed: {e}")
+            return []
 
     # Defensive unpack
-    if not results:
+    if not results or not results.get("ids"):
         print(" No results object returned.")
         return []
 
@@ -102,9 +108,14 @@ def search_emails(query: str, n_results: int = 3):
             "filename": filename,
             "content": content
         })
+    if log_timings:
+        timings["query"] = query
+        timings["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        with open("latency_log.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(timings) + "\n")
 
     print(f" Found {len(docs)} result(s) for query: '{query}'")
-    return docs
+    return docs, timings
 
 
 if __name__ == "__main__":
