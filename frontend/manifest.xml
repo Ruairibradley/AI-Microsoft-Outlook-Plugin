@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+           xsi:type="MailApp">
+
+  <Id>ad030d55-f87e-4abf-ae0c-07aad7369fab</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Ruairi Bradley</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Outlook Privacy Assistant"/>
+  <Description DefaultValue="Local, privacy-preserving email assistant (encrypted local index + local LLM)."/>
+
+  <!-- Use a real, reachable icon URL -->
+  <IconUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/vite.svg"/>
+  <HighResolutionIconUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/vite.svg"/>
+
+  <SupportUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
+
+  <AppDomains>
+    <AppDomain>https://calm-river-0a2d7241e.1.azurestaticapps.net</AppDomain>
+    <AppDomain>https://login.microsoftonline.com</AppDomain>
+    <AppDomain>https://graph.microsoft.com</AppDomain>
+    <AppDomain>https://localhost:8443</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Mailbox"/>
+  </Hosts>
+
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.8"/>
+    </Sets>
+  </Requirements>
+
+  <Permissions>ReadItem</Permissions>
+
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
+  </Rule>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.0">
+    <VersionOverrides xsi:type="VersionOverridesV1_0">
+      <Hosts>
+        <Host xsi:type="MailHost">
+          <DesktopFormFactor>
+
+            <FunctionFile resid="functionFile"/>
+
+            <ExtensionPoint xsi:type="MessageReadCommandSurface">
+              <OfficeCommand>
+                <Id>ShowTaskpane</Id>
+                <Label resid="cmdLabel"/>
+                <Supertip>
+                  <Title resid="cmdLabel"/>
+                  <Description resid="cmdDesc"/>
+                </Supertip>
+                <Icon>
+                  <bt:Image size="16" resid="icon16"/>
+                  <bt:Image size="32" resid="icon32"/>
+                  <bt:Image size="80" resid="icon80"/>
+                </Icon>
+                <Action xsi:type="ShowTaskpane">
+                  <SourceLocation resid="taskpaneUrl"/>
+                </Action>
+              </OfficeCommand>
+            </ExtensionPoint>
+
+          </DesktopFormFactor>
+        </Host>
+      </Hosts>
+
+      <Resources>
+        <bt:Images>
+          <bt:Image id="icon16" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/vite.svg"/>
+          <bt:Image id="icon32" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/vite.svg"/>
+          <bt:Image id="icon80" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/vite.svg"/>
+        </bt:Images>
+
+        <bt:Urls>
+          <bt:Url id="taskpaneUrl" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
+          <bt:Url id="functionFile" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
+        </bt:Urls>
+
+        <bt:ShortStrings>
+          <bt:String id="cmdLabel" DefaultValue="Privacy Assistant"/>
+        </bt:ShortStrings>
+
+        <bt:LongStrings>
+          <bt:String id="cmdDesc" DefaultValue="Open the privacy-first assistant sidebar."/>
+        </bt:LongStrings>
+      </Resources>
+
+    </VersionOverrides>
+  </VersionOverrides>
+
+</OfficeApp>
