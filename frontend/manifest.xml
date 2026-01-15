@@ -14,7 +14,6 @@
 
   <IconUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/assets/icon-64.png"/>
-
   <SupportUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
 
   <AppDomains>
@@ -24,12 +23,6 @@
     <AppDomain>https://localhost</AppDomain>
     <AppDomain>https://localhost:8443</AppDomain>
   </AppDomains>
-
-  <!-- Recommended identity declaration -->
-  <bt:WebApplicationInfo>
-    <bt:Id>81dcae7c-55a9-4e4e-86e1-e364b25fc990</bt:Id>
-    <bt:Resource>https://graph.microsoft.com</bt:Resource>
-  </bt:WebApplicationInfo>
 
   <Hosts>
     <Host Name="Mailbox"/>
@@ -41,11 +34,22 @@
     </Sets>
   </Requirements>
 
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
+        <RequestedHeight>450</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+
   <Permissions>ReadItem</Permissions>
 
   <Rule xsi:type="RuleCollection" Mode="Or">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
   </Rule>
+
+  <DisableEntityHighlighting>true</DisableEntityHighlighting>
 
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.0">
     <VersionOverrides xsi:type="VersionOverridesV1_0">
@@ -63,13 +67,11 @@
                   <Title resid="cmdLabel"/>
                   <Description resid="cmdDesc"/>
                 </Supertip>
-
                 <Icon>
                   <bt:Image size="16" resid="icon16"/>
                   <bt:Image size="32" resid="icon32"/>
                   <bt:Image size="80" resid="icon80"/>
                 </Icon>
-
                 <Action xsi:type="ShowTaskpane">
                   <SourceLocation resid="taskpaneUrl"/>
                 </Action>
@@ -89,7 +91,7 @@
 
         <bt:Urls>
           <bt:Url id="taskpaneUrl" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
-          <bt:Url id="functionFile" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
+          <bt:Url id="functionFile" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/function-file.html"/>
         </bt:Urls>
 
         <bt:ShortStrings>
