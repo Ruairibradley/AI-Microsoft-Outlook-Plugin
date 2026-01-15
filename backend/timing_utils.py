@@ -1,8 +1,11 @@
 import time
 from contextlib import contextmanager
+from typing import Dict, Any
 
 @contextmanager
-def timer(record, key):
+def timer(record: Dict[str, Any], key: str):
     start = time.perf_counter()
-    yield
-    record[key] = (time.perf_counter() - start) * 1000
+    try:
+        yield
+    finally:
+        record[key] = (time.perf_counter() - start) * 1000.0

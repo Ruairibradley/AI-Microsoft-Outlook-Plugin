@@ -1,70 +1,85 @@
-import time
 import json
-from email_processor import search_emails
-from ollama_client import generate
-from timing_utils import timer
+import time
+
+from backend.email_processor import search_emails, clear_index
+from backend.ollama_client import generate
+
+def build_prompt(question: str, results):
+    sources = []
+    for i, r in enumerate(results, start=1):
+        sources.append(
+            f"[{i}] Subject: {r['subject']}\nFrom: {r['sender']}\nReceived: {r['received_dt']}\nLink: {r['weblink']}\n\n{r['content']}"
+        )
+    return (
+        "Answer the question using ONLY the SOURCES below.\n"
+        "If the answer is not contained in the sources, say you don't know.\n"
+        "Cite sources using [1], [2], etc.\n\n"
+        "SOURCES:\n" + "\n\n".join(sources) + "\n\n"
+        "QUESTION:\n" + question + "\n\n"
+        "ANSWER:\n"
+    )
 
 def main():
-    print("\nOutlook AI CLI – Local Email Assistant")
-    print("Type 'exit' to quit.\n")
+    print("\nOutlook AI CLI – Local Index Query Tool (Encrypted SQLite + Chroma + Ollama)")
+    print("Commands: 'clear' to delete local index, 'exit' to quit.\n")
+
+    passphrase = input("Passphrase (used to decrypt local index): ").strip()
+    if len(passphrase) < 8:
+        print("Passphrase must be at least 8 characters.")
+        return
 
     while True:
-        query = input(" Ask a question: ").strip()
-        if query.lower() in {"exit", "quit"}:
-            print(" Goodbye!")
+        q = input("\nAsk a question ('clear' / 'exit'): ").strip()
+        if q.lower() in {"exit", "quit"}:
+            print("Goodbye.")
             break
 
-        print("\n Searching for relevant emails...\n")
-
-        # Measure total end-to-end latency
-        timings = {}
-        t0 = time.perf_counter()
-
-        # Step 1 – Retrieval (vector search)
-        results, retrieval_timings = search_emails(query, n_results=3, log_timings=False)
-        timings.update(retrieval_timings)
-
-        if not results:
-            print("No matching emails found.\n")
+        if q.lower() == "clear":
+            res = clear_index()
+            print(f"Cleared: {res}")
             continue
 
-        # Step 2 – Prepare prompt
-        context = "\n\n".join([f"Email: {r['filename']}\n{r['content']}" for r in results])
-        prompt = (
-            f"Use the following emails to answer the question.\n\n"
-            f"{context}\n\n"
-            f"Question: {query}\n"
-            f"Answer clearly and cite the source email filenames."
-        )
+        t0 = time.perf_counter()
+        print("\nSearching...\n")
+        results, t_retr = search_emails(q, passphrase=passphrase, n_results=4, log_timings=False)
 
-        print(" Thinking...\n")
+        if not results:
+            print("No results found.\n")
+            continue
 
-        # Step 3 – LLM Generation (inference)
-        answer, llm_timings = generate(prompt, log_timings=False)
-        timings.update(llm_timings)
+        prompt = build_prompt(q, results)
 
-        # Step 4 – Total timing
-        total_time_s = time.perf_counter() - t0
-        timings["total_ms"] = round(total_time_s * 1000, 1)
-        timings["query"] = query
-        timings["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        print("Thinking...\n")
+        answer, t_llm = generate(prompt, max_tokens=220, log_timings=False)
+        total_ms = (time.perf_counter() - t0) * 1000.0
 
-        # Step 5 – Output and log
-        print("\n Answer:\n", answer)
-        print("\n Sources:")
-        for r in results:
-            print(" -", r["filename"])
+        print("\nAnswer:\n")
+        print(answer)
+
+        print("\n--- Retrieved Sources ---")
+        for i, r in enumerate(results, start=1):
+            score = r.get("score", None)
+            score_str = f"{score:.4f}" if isinstance(score, float) else "n/a"
+            print(f"[{i}] score={score_str} subject={r['subject']}")
+            print(f"    from={r['sender']} received={r['received_dt']}")
+            print(f"    link={r['weblink']}")
+            print(r["snippet"])
+            print()
 
         print("\n--- Latency Breakdown ---")
-        for k, v in timings.items():
+        for k, v in {**t_retr, **t_llm}.items():
             if k.endswith("_ms"):
-                print(f"{k:20s}: {v:.1f} ms")
-        print("-" * 60 + "\n")
+                print(f"{k:22s}: {v:.1f} ms")
+        print(f"{'total_ms':22s}: {total_ms:.1f} ms")
 
-        # Log to JSONL file
+        log = {
+            "event": "cli_query",
+            "query": q,
+            "total_ms": total_ms,
+            **{k: v for k, v in {**t_retr, **t_llm}.items() if isinstance(v, (int, float, str))},
+        }
         with open("latency_log.jsonl", "a", encoding="utf-8") as f:
-            f.write(json.dumps(timings) + "\n")
-
+            f.write(json.dumps(log) + "\n")
 
 if __name__ == "__main__":
     main()

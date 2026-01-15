@@ -1,0 +1,21 @@
+# Core API framework
+fastapi
+uvicorn[standard]
+
+# Data validation & config
+pydantic
+python-dotenv
+
+# HTTP & auth
+requests
+msal
+cryptography
+
+# Vector DB & embeddings
+chromadb==1.2.0
+sentence-transformers
+numpy
+
+# System & utilities
+psutil
+sqlite-utils

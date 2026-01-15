@@ -1,124 +1,154 @@
-import os
-from chroma_service import get_client
-from database import get_conn
-from chromadb.utils import embedding_functions
 import time
-from timing_utils import timer
 import json
-import os
+import numpy as np
+from typing import Dict, Any, List, Optional, Tuple
 
+from .chroma_service import get_client
+from .database import get_conn, init_db
+from .embedding_service import embed_texts
+from .encryption_utils import encrypt_text, decrypt_text
+from .timing_utils import timer
 
-def ingest_emails(email_dir: str = "./data/test_emails"):
-    chroma = get_client()
+COLLECTION_NAME = "emails"
+
+def _normalize_message(m: Dict[str, Any]) -> Dict[str, Any]:
+    sender = ""
+    try:
+        sender = (m.get("from") or {}).get("emailAddress", {}).get("address", "") or ""
+    except Exception:
+        sender = ""
+
+    subject = m.get("subject") or ""
+    received_dt = m.get("receivedDateTime") or ""
+    weblink = m.get("webLink") or ""
+    body_preview = m.get("bodyPreview") or ""
+
+    # What we embed & store (MVP privacy-safe; expand to body.content later if needed)
+    content = f"Subject: {subject}\nFrom: {sender}\nReceived: {received_dt}\n\n{body_preview}".strip()
+
+    return {
+        "message_id": m["id"],
+        "subject": subject,
+        "sender": sender,
+        "received_dt": received_dt,
+        "weblink": weblink,
+        "content": content,
+    }
+
+def ingest_messages(messages: List[Dict[str, Any]], passphrase: str, folder_id: Optional[str] = None, log_timings: bool = False) -> Dict[str, Any]:
+    timings: Dict[str, Any] = {}
     conn = get_conn()
-    cursor = conn.cursor()
+    init_db(conn)
+    cur = conn.cursor()
 
-    # Create SQLite table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS emails (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT,
-            content TEXT
-        )
-    """)
+    normalized = [_normalize_message(m) for m in messages if m.get("id")]
+    if not normalized:
+        return {"ingested_count": 0, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}
 
-    # Add a default embedding function - later will be sentenceTransformmers.
-    embedding_fn = embedding_functions.DefaultEmbeddingFunction()
-
-    # Create or load collection
-    collection = chroma.get_or_create_collection(name="emails")
-
-    # Loop and ingest files
-    count = 0
-    for filename in os.listdir(email_dir):
-        if not filename.endswith(".txt"):
-            continue
-
-        file_path = os.path.join(email_dir, filename)
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read().strip()
-
-        if not content:
-            print(f" Skipped empty file: {filename}")
-            continue
-
-        cursor.execute("INSERT INTO emails (filename, content) VALUES (?, ?)", (filename, content))
-        email_id = cursor.lastrowid
-
-        # Add embed to Chroma
-        try:
-            collection.add(
-                documents=[content],
-                metadatas=[{"filename": filename}],
-                ids=[str(email_id)]
+    with timer(timings, "sqlite_upsert_ms"):
+        for m in normalized:
+            enc = encrypt_text(m["content"], passphrase)
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO emails
+                (message_id, folder_id, subject, sender, received_dt, weblink, content_enc)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (m["message_id"], folder_id, m["subject"], m["sender"], m["received_dt"], m["weblink"], enc),
             )
-            count += 1
-            print(f" Ingested: {filename}")
-        except Exception as e:
-            print(f" Failed to embed {filename}: {e}")
+        conn.commit()
 
-    conn.commit()
-    print(f" Ingestion complete. ({count} files embedded)")
+    with timer(timings, "sqlite_fetch_ms"):
+        cur.execute("SELECT message_id, content_enc FROM emails")
+        rows = cur.fetchall()
 
-    #  show if items exist in chroma
-    print(f" Collection '{collection.name}' now contains {collection.count()} items.")
+    ids = [r["message_id"] for r in rows]
+    docs = [decrypt_text(r["content_enc"], passphrase) for r in rows]
 
+    with timer(timings, "embedding_ms"):
+        vectors = np.asarray(embed_texts(docs), dtype=np.float32)
 
-def search_emails(query: str, n_results: int = 3, log_timings = False):
-    chroma = get_client()
-    embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+    client = get_client()
+    collection = client.get_or_create_collection(name=COLLECTION_NAME)
 
-    collection = chroma.get_or_create_collection(name="emails")
+    with timer(timings, "chroma_write_ms"):
+        if hasattr(collection, "upsert"):
+            collection.upsert(ids=ids, embeddings=vectors)
+        else:
+            try:
+                client.delete_collection(COLLECTION_NAME)
+            except Exception:
+                pass
+            collection = client.get_or_create_collection(name=COLLECTION_NAME)
+            collection.add(ids=ids, embeddings=vectors)
 
+    timings["ingested_count"] = len(normalized)
+    timings["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
 
-    timings ={}
+    if log_timings:
+        with open("latency_log.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"event": "ingest", **timings}) + "\n")
+
+    return timings
+
+def search_emails(query: str, passphrase: str, n_results: int = 4, log_timings: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    timings: Dict[str, Any] = {}
+    client = get_client()
+    collection = client.get_or_create_collection(name=COLLECTION_NAME)
+
+    with timer(timings, "embedding_query_ms"):
+        qvec = np.asarray(embed_texts([query])[0], dtype=np.float32)
+
     with timer(timings, "vector_search_ms"):
-        try:
-            results = collection.query(query_texts=[query], n_results=n_results)
-        except Exception as e:
-            print(f" Query failed: {e}")
-            return []
-
-    # Defensive unpack
-    if not results or not results.get("ids"):
-        print(" No results object returned.")
-        return []
+        results = collection.query(query_embeddings=[qvec], n_results=n_results, include=["distances"])
 
     ids = (results.get("ids") or [[]])[0]
-    docs_list = (results.get("documents") or [[]])[0]
-    metas_list = (results.get("metadatas") or [[]])[0]
+    dists = (results.get("distances") or [[]])[0]
 
-    if not ids:
-        print(" No results found in Chroma for this query.")
-        return []
+    conn = get_conn()
+    cur = conn.cursor()
 
-    docs = []
-    for i in range(len(ids)):
-        filename = "unknown"
-        if metas_list and isinstance(metas_list, list) and i < len(metas_list):
-            meta_item = metas_list[i] or {}
-            filename = meta_item.get("filename", "unknown")
+    out: List[Dict[str, Any]] = []
+    for i, message_id in enumerate(ids):
+        cur.execute(
+            "SELECT message_id, subject, sender, received_dt, weblink, content_enc FROM emails WHERE message_id = ?",
+            (message_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            continue
 
-        content = ""
-        if docs_list and isinstance(docs_list, list) and i < len(docs_list):
-            content = docs_list[i] or ""
-
-        docs.append({
-            "id": ids[i],
-            "filename": filename,
-            "content": content
+        content = decrypt_text(row["content_enc"], passphrase)
+        out.append({
+            "message_id": row["message_id"],
+            "subject": row["subject"] or "",
+            "sender": row["sender"] or "",
+            "received_dt": row["received_dt"] or "",
+            "weblink": row["weblink"] or "",
+            "score": float(dists[i]) if i < len(dists) else None,
+            "content": content,
+            "snippet": content[:500],
         })
+
+    timings["query"] = query
+    timings["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+
     if log_timings:
-        timings["query"] = query
-        timings["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         with open("latency_log.jsonl", "a", encoding="utf-8") as f:
-            f.write(json.dumps(timings) + "\n")
+            f.write(json.dumps({"event": "search", **timings}) + "\n")
 
-    print(f" Found {len(docs)} result(s) for query: '{query}'")
-    return docs, timings
+    return out, timings
 
+def clear_index() -> Dict[str, Any]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM emails")
+    conn.commit()
 
-if __name__ == "__main__":
-    ingest_emails(email_dir="./data/outlook_emails")
+    client = get_client()
+    try:
+        client.delete_collection(COLLECTION_NAME)
+    except Exception:
+        pass
 
-
+    return {"cleared": True, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}

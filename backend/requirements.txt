@@ -1,7 +1,0 @@
-fastapi
-uvicorn[standard]
-chromadb
-pydantic
-python-dotenv
-requests
-sqlite-utils

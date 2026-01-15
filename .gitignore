@@ -30,3 +30,9 @@ data/*.sqlite3
 
 # Dist
 dist/
+
+backend/certs/
+backend/data/
+backend/latency_log.jsonl
+
+
