@@ -7,7 +7,7 @@
   xsi:type="MailApp">
 
   <Id>ad030d55-f87e-4abf-ae0c-07aad7369fab</Id>
-  <Version>1.0.0.1</Version>
+  <Version>1.0.0.2</Version>
   <ProviderName>Ruairi Bradley</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
 
@@ -51,6 +51,7 @@
 
   <DisableEntityHighlighting>true</DisableEntityHighlighting>
 
+  <!-- Commands schema for Outlook -->
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides"
                     xsi:type="VersionOverridesV1_0">
 
@@ -61,25 +62,35 @@
           <FunctionFile resid="functionFile"/>
 
           <ExtensionPoint xsi:type="MessageReadCommandSurface">
-            <OfficeCommand>
-              <Id>ShowPrivacyAssistant</Id>
-              <Label resid="cmdLabel"/>
 
-              <Supertip>
-                <Title resid="cmdLabel"/>
-                <Description resid="cmdDesc"/>
-              </Supertip>
+            <!-- Required container -->
+            <OfficeTab id="TabDefault">
 
-              <Icon>
-                <bt:Image size="16" resid="icon16"/>
-                <bt:Image size="32" resid="icon32"/>
-                <bt:Image size="80" resid="icon80"/>
-              </Icon>
+              <Group id="PrivacyAssistant.Group">
+                <Label resid="groupLabel"/>
 
-              <Action xsi:type="ShowTaskpane">
-                <SourceLocation resid="taskpaneUrl"/>
-              </Action>
-            </OfficeCommand>
+                <Control xsi:type="Button" id="PrivacyAssistant.Button">
+                  <Label resid="cmdLabel"/>
+
+                  <Supertip>
+                    <Title resid="cmdLabel"/>
+                    <Description resid="cmdDesc"/>
+                  </Supertip>
+
+                  <Icon>
+                    <bt:Image size="16" resid="icon16"/>
+                    <bt:Image size="32" resid="icon32"/>
+                    <bt:Image size="80" resid="icon80"/>
+                  </Icon>
+
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="taskpaneUrl"/>
+                  </Action>
+                </Control>
+
+              </Group>
+
+            </OfficeTab>
           </ExtensionPoint>
 
         </DesktopFormFactor>
@@ -99,6 +110,7 @@
       </bt:Urls>
 
       <bt:ShortStrings>
+        <bt:String id="groupLabel" DefaultValue="Privacy"/>
         <bt:String id="cmdLabel" DefaultValue="Privacy Assistant"/>
       </bt:ShortStrings>
 
