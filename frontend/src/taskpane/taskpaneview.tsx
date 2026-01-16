@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  get_access_token,
-  try_get_access_token_silent,
-  get_signed_in_user,
-  sign_out,
-  get_access_token_select_account
-} from "../auth/token";
+import { get_access_token, try_get_access_token_silent, get_signed_in_user, sign_out } from "../auth/token";
 import { ask_question, clear_index, get_folders, get_messages, ingest_messages } from "../api/backend";
 
 type folder = {
@@ -130,38 +124,13 @@ export default function TaskPaneView() {
     }
   }
 
-  async function switch_account_clicked() {
-    setError("");
-    setBusy("switching account...");
-    try {
-      const token = await get_access_token_select_account();
-      setTokenOk(true);
-      setAccessToken(token);
-
-      const who = await get_signed_in_user();
-      setUserLabel(who?.username || who?.name || "");
-
-      setStatus("signed in");
-      await load_folders_with_token(token);
-      setStatus("ready");
-    } catch (e: any) {
-      setTokenOk(false);
-      setAccessToken("");
-      setUserLabel("");
-      setStatus("error");
-      setError(String(e?.message || e));
-    } finally {
-      setBusy("");
-    }
-  }
-
   async function sign_out_clicked() {
     setError("");
     setBusy("signing out...");
     try {
       await sign_out();
 
-      // Reset local UI state (MSAL cache is cleared by sign_out()).
+      // Reset local UI state after MSAL cache is cleared.
       setTokenOk(false);
       setAccessToken("");
       setUserLabel("");
@@ -320,15 +289,9 @@ export default function TaskPaneView() {
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         {!token_ok ? (
-          <>
-            <button onClick={() => sign_in_clicked()}>Sign in</button>
-            <button onClick={() => switch_account_clicked()}>Switch account</button>
-          </>
+          <button onClick={() => sign_in_clicked()}>Sign in</button>
         ) : (
-          <>
-            <button onClick={() => switch_account_clicked()}>Switch account</button>
-            <button onClick={() => sign_out_clicked()}>Sign out</button>
-          </>
+          <button onClick={() => sign_out_clicked()}>Sign out</button>
         )}
       </div>
 

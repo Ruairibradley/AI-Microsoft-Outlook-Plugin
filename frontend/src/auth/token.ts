@@ -76,8 +76,8 @@ export async function get_signed_in_user(): Promise<SignedInUser | null> {
 }
 
 /**
- * Signs out the cached account from MSAL.
- * After this, silent token acquisition will fail and the user must sign in again.
+ * Sign out and remove cached account so next launch is NOT automatically signed in.
+ * Uses logoutPopup to end the MSAL session for the cached account.
  */
 export async function sign_out(): Promise<void> {
   await ensure_msal_initialized();
@@ -85,40 +85,8 @@ export async function sign_out(): Promise<void> {
   const accounts = msalInstance.getAllAccounts();
   if (!accounts.length) return;
 
+  // This removes the account from the MSAL cache for this app.
   await msalInstance.logoutPopup({
     account: accounts[0]
   });
-}
-
-/**
- * Forces an account picker prompt (useful for "Switch account").
- * If no cached account, it behaves like sign-in but with selection enforced.
- */
-export async function get_access_token_select_account(): Promise<string> {
-  await ensure_msal_initialized();
-
-  const accounts = msalInstance.getAllAccounts();
-
-  if (!accounts.length) {
-    const loginRes = await msalInstance.loginPopup({
-      scopes: graphScopes,
-      prompt: "select_account"
-    });
-
-    const tokenRes = await msalInstance.acquireTokenSilent({
-      account: loginRes.account!,
-      scopes: graphScopes
-    });
-
-    return tokenRes.accessToken;
-  }
-
-  // If there is a cached account, still force a selection.
-  const tokenRes = await msalInstance.acquireTokenPopup({
-    account: accounts[0],
-    scopes: graphScopes,
-    prompt: "select_account"
-  });
-
-  return tokenRes.accessToken;
 }
