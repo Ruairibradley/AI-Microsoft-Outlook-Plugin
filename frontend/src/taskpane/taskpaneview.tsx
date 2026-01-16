@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { get_access_token, try_get_access_token_silent } from "../auth/token";
+import {
+  get_access_token,
+  try_get_access_token_silent,
+  get_signed_in_user,
+  sign_out,
+  get_access_token_select_account
+} from "../auth/token";
 import { ask_question, clear_index, get_folders, get_messages, ingest_messages } from "../api/backend";
 
 type folder = {
@@ -39,6 +45,8 @@ export default function TaskPaneView() {
   const [token_ok, setTokenOk] = useState(false);
   const [access_token, setAccessToken] = useState<string>("");
 
+  const [user_label, setUserLabel] = useState<string>("");
+
   const [passphrase, setPassphrase] = useState("");
   const passphrase_ok = passphrase.length >= 8;
 
@@ -74,17 +82,24 @@ export default function TaskPaneView() {
       if (!token) {
         setTokenOk(false);
         setAccessToken("");
+        setUserLabel("");
         setStatus("not signed in");
         return;
       }
+
       setTokenOk(true);
       setAccessToken(token);
+
+      const who = await get_signed_in_user();
+      setUserLabel(who?.username || who?.name || "");
+
       setStatus("signed in");
       await load_folders_with_token(token);
       setStatus("ready");
     } catch (e: any) {
       setTokenOk(false);
       setAccessToken("");
+      setUserLabel("");
       setStatus("error");
       setError(String(e?.message || e));
     }
@@ -97,12 +112,70 @@ export default function TaskPaneView() {
       const token = await get_access_token();
       setTokenOk(true);
       setAccessToken(token);
+
+      const who = await get_signed_in_user();
+      setUserLabel(who?.username || who?.name || "");
+
       setStatus("signed in");
       await load_folders_with_token(token);
       setStatus("ready");
     } catch (e: any) {
       setTokenOk(false);
       setAccessToken("");
+      setUserLabel("");
+      setStatus("error");
+      setError(String(e?.message || e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function switch_account_clicked() {
+    setError("");
+    setBusy("switching account...");
+    try {
+      const token = await get_access_token_select_account();
+      setTokenOk(true);
+      setAccessToken(token);
+
+      const who = await get_signed_in_user();
+      setUserLabel(who?.username || who?.name || "");
+
+      setStatus("signed in");
+      await load_folders_with_token(token);
+      setStatus("ready");
+    } catch (e: any) {
+      setTokenOk(false);
+      setAccessToken("");
+      setUserLabel("");
+      setStatus("error");
+      setError(String(e?.message || e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function sign_out_clicked() {
+    setError("");
+    setBusy("signing out...");
+    try {
+      await sign_out();
+
+      // Reset local UI state (MSAL cache is cleared by sign_out()).
+      setTokenOk(false);
+      setAccessToken("");
+      setUserLabel("");
+      setFolders([]);
+      setFolderId("");
+      setMessages([]);
+      setSelectedIds(new Set());
+      setShowConsent(false);
+      setConsentChecked(false);
+      setQuestion("");
+      setAnswer("");
+      setSources([]);
+      setStatus("not signed in");
+    } catch (e: any) {
       setStatus("error");
       setError(String(e?.message || e));
     } finally {
@@ -112,6 +185,7 @@ export default function TaskPaneView() {
 
   useEffect(() => {
     initialize_session_silent().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---------- messages ----------
@@ -239,13 +313,24 @@ export default function TaskPaneView() {
 
       <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 10 }}>
         <strong>Status:</strong> {status} {busy ? `— ${busy}` : ""}
+        {token_ok && user_label ? (
+          <span> — <strong>Signed in:</strong> {user_label}</span>
+        ) : null}
       </div>
 
-      {!token_ok && (
-        <button onClick={() => sign_in_clicked()}>
-          Sign in
-        </button>
-      )}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {!token_ok ? (
+          <>
+            <button onClick={() => sign_in_clicked()}>Sign in</button>
+            <button onClick={() => switch_account_clicked()}>Switch account</button>
+          </>
+        ) : (
+          <>
+            <button onClick={() => switch_account_clicked()}>Switch account</button>
+            <button onClick={() => sign_out_clicked()}>Sign out</button>
+          </>
+        )}
+      </div>
 
       {error && (
         <pre style={{ whiteSpace: "pre-wrap", border: "1px solid #ccc", padding: 8, marginTop: 10 }}>

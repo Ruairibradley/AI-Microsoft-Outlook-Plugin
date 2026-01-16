@@ -20,3 +20,18 @@
 {"event": "search", "embedding_query_ms": 9.237300022505224, "vector_search_ms": 33.48169999662787, "query": "how much holiday do i have", "timestamp": "2026-01-15T15:22:49"}
 {"event": "llm", "llm_inference_ms": 1365.5533000128344, "avg_cpu_percent": 67.4, "peak_cpu_percent": 82.9, "peak_mem_mb": 491.3, "model": "qwen2.5:3b", "timestamp": "2026-01-15T15:22:51"}
 {"event": "search", "embedding_query_ms": 8.740400080569088, "vector_search_ms": 28.438800014555454, "query": "how much holiday do i have", "timestamp": "2026-01-15T15:23:57"}
+{"event": "ingest", "sqlite_upsert_ms": 228.57310000108555, "sqlite_fetch_ms": 0.2538999979151413, "embedding_ms": 17153.730900012306, "chroma_write_ms": 94.94959999574348, "ingested_count": 2, "timestamp": "2026-01-16T15:12:05"}
+{"event": "ingest", "sqlite_upsert_ms": 84.8524000030011, "sqlite_fetch_ms": 0.3056999994441867, "embedding_ms": 24183.083900003112, "chroma_write_ms": 20.953700004611164, "ingested_count": 2, "timestamp": "2026-01-16T15:12:16"}
+{"event": "search", "embedding_query_ms": 10.09409999824129, "vector_search_ms": 39.54510000767186, "query": "how much holiday can i take?", "timestamp": "2026-01-16T15:12:16"}
+{"event": "search", "embedding_query_ms": 52.01210000086576, "vector_search_ms": 2.8663999983109534, "query": "how much holiday can i take?", "timestamp": "2026-01-16T15:12:21"}
+{"event": "llm", "llm_inference_ms": 17377.24380000145, "avg_cpu_percent": 55.3, "peak_cpu_percent": 78.6, "peak_mem_mb": 338.7, "model": "qwen2.5:3b", "timestamp": "2026-01-16T15:12:34"}
+{"event": "llm", "llm_inference_ms": 14268.910500002676, "avg_cpu_percent": 65.7, "peak_cpu_percent": 79.3, "peak_mem_mb": 308.9, "model": "qwen2.5:3b", "timestamp": "2026-01-16T15:12:35"}
+{"event": "search", "embedding_query_ms": 11.788999996497296, "vector_search_ms": 33.95739999541547, "query": "how much holiday can i take?", "timestamp": "2026-01-16T15:12:44"}
+{"event": "ingest", "sqlite_upsert_ms": 85.86579999246169, "sqlite_fetch_ms": 0.21680000645574182, "embedding_ms": 17.657600008533336, "chroma_write_ms": 54.73829999391455, "ingested_count": 2, "timestamp": "2026-01-16T15:17:36"}
+{"event": "search", "embedding_query_ms": 9.704700001748279, "vector_search_ms": 35.369599994737655, "query": "how much overtime will i be paid?", "timestamp": "2026-01-16T15:17:53"}
+{"event": "search", "embedding_query_ms": 35.434699995676056, "vector_search_ms": 3.096799991908483, "query": "how much overtime will i be paid?", "timestamp": "2026-01-16T15:17:58"}
+{"event": "llm", "llm_inference_ms": 15502.667300010216, "avg_cpu_percent": 58.5, "peak_cpu_percent": 95.8, "peak_mem_mb": 244.3, "model": "qwen2.5:3b", "timestamp": "2026-01-16T15:18:09"}
+{"event": "llm", "llm_inference_ms": 13081.645300000673, "avg_cpu_percent": 65.3, "peak_cpu_percent": 82.9, "peak_mem_mb": 242.9, "model": "qwen2.5:3b", "timestamp": "2026-01-16T15:18:11"}
+{"event": "ingest", "sqlite_upsert_ms": 88.65650001098402, "sqlite_fetch_ms": 0.37369999336078763, "embedding_ms": 2540.276999992784, "chroma_write_ms": 66.96050000027753, "ingested_count": 1, "timestamp": "2026-01-16T15:26:41"}
+{"event": "search", "embedding_query_ms": 8.501499993144535, "vector_search_ms": 32.46020000369754, "query": "how much overtime will i get?", "timestamp": "2026-01-16T15:27:04"}
+{"event": "llm", "llm_inference_ms": 12050.684600006207, "avg_cpu_percent": 64.3, "peak_cpu_percent": 98.1, "peak_mem_mb": 478.9, "model": "qwen2.5:3b", "timestamp": "2026-01-16T15:27:16"}
