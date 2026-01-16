@@ -1,28 +1,40 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
-           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
-           xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
-           xsi:type="MailApp">
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
+  xsi:type="MailApp">
+
+  <!-- ===================== -->
+  <!-- BASIC METADATA        -->
+  <!-- ===================== -->
 
   <Id>ad030d55-f87e-4abf-ae0c-07aad7369fab</Id>
   <Version>1.0.0.0</Version>
   <ProviderName>Ruairi Bradley</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
+
   <DisplayName DefaultValue="Outlook Privacy Assistant"/>
   <Description DefaultValue="Local, privacy-preserving email assistant (encrypted local index + local LLM)."/>
 
-  <IconUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/assets/icon-32.png"/>
-  <HighResolutionIconUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/assets/icon-64.png"/>
-  <SupportUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
+  <IconUrl DefaultValue="https://localhost:8443/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://localhost:8443/assets/icon-64.png"/>
+  <SupportUrl DefaultValue="https://localhost:8443/"/>
 
-  <!-- HOSTNAMES ONLY -->
+  <!-- ===================== -->
+  <!-- SECURITY / DOMAINS    -->
+  <!-- ===================== -->
+
   <AppDomains>
-    <AppDomain>calm-river-0a2d7241e.1.azurestaticapps.net</AppDomain>
+    <AppDomain>localhost</AppDomain>
     <AppDomain>login.microsoftonline.com</AppDomain>
     <AppDomain>graph.microsoft.com</AppDomain>
-    <AppDomain>localhost</AppDomain>
   </AppDomains>
+
+  <!-- ===================== -->
+  <!-- HOST + REQUIREMENTS   -->
+  <!-- ===================== -->
 
   <Hosts>
     <Host Name="Mailbox"/>
@@ -34,10 +46,14 @@
     </Sets>
   </Requirements>
 
+  <!-- ===================== -->
+  <!-- DEFAULT FORM          -->
+  <!-- ===================== -->
+
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
+        <SourceLocation DefaultValue="https://localhost:8443/"/>
         <RequestedHeight>450</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -51,20 +67,27 @@
 
   <DisableEntityHighlighting>true</DisableEntityHighlighting>
 
-  <!-- Use v1.1 overrides for best Outlook Classic compatibility -->
-  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
-                    xsi:type="VersionOverridesV1_1">
+  <!-- ===================== -->
+  <!-- VERSION OVERRIDES     -->
+  <!-- ===================== -->
+
+  <VersionOverrides
+    xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
+    xsi:type="VersionOverridesV1_1">
 
     <Hosts>
       <Host xsi:type="MailHost">
         <DesktopFormFactor>
 
+          <!-- Required even if empty -->
           <FunctionFile resid="functionFile"/>
 
           <ExtensionPoint xsi:type="MessageReadCommandSurface">
             <OfficeCommand>
               <Id>ShowPrivacyAssistant</Id>
+
               <Label resid="cmdLabel"/>
+
               <Supertip>
                 <Title resid="cmdLabel"/>
                 <Description resid="cmdDesc"/>
@@ -79,6 +102,7 @@
               <Action xsi:type="ShowTaskpane">
                 <SourceLocation resid="taskpaneUrl"/>
               </Action>
+
             </OfficeCommand>
           </ExtensionPoint>
 
@@ -86,16 +110,21 @@
       </Host>
     </Hosts>
 
+    <!-- ===================== -->
+    <!-- RESOURCES             -->
+    <!-- ===================== -->
+
     <Resources>
+
       <bt:Images>
-        <bt:Image id="icon16" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/assets/icon-16.png"/>
-        <bt:Image id="icon32" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/assets/icon-32.png"/>
-        <bt:Image id="icon80" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/assets/icon-80.png"/>
+        <bt:Image id="icon16" DefaultValue="https://localhost:8443/assets/icon-16.png"/>
+        <bt:Image id="icon32" DefaultValue="https://localhost:8443/assets/icon-32.png"/>
+        <bt:Image id="icon80" DefaultValue="https://localhost:8443/assets/icon-80.png"/>
       </bt:Images>
 
       <bt:Urls>
-        <bt:Url id="taskpaneUrl" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
-        <bt:Url id="functionFile" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/function-file.html"/>
+        <bt:Url id="taskpaneUrl" DefaultValue="https://localhost:8443/"/>
+        <bt:Url id="functionFile" DefaultValue="https://localhost:8443/function-file.html"/>
       </bt:Urls>
 
       <bt:ShortStrings>
@@ -105,6 +134,7 @@
       <bt:LongStrings>
         <bt:String id="cmdDesc" DefaultValue="Open the local, privacy-first assistant sidebar."/>
       </bt:LongStrings>
+
     </Resources>
 
   </VersionOverrides>

@@ -3,6 +3,7 @@ from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .graph_client import list_folders, list_messages, get_messages_by_ids
@@ -11,7 +12,10 @@ from .ollama_client import generate
 
 app = FastAPI(title="Outlook Local-Privacy Assistant Backend")
 
-origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "https://localhost:3000").split(",")]
+# When we serve the frontend from the same origin (https://localhost:8443),
+# CORS is not required. However, keeping it permissive for localhost dev is fine.
+# Default allows ONLY the same-origin app.
+origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "https://localhost:8443").split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
@@ -102,3 +106,9 @@ def query(req: QueryRequest):
 @app.post("/clear")
 def clear(req: ClearRequest):
     return clear_index()
+
+# ---- Serve frontend build output (must be mounted LAST) ----
+# Vite build writes to backend/web (see vite.config.ts).
+WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
+if os.path.isdir(WEB_DIR):
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
