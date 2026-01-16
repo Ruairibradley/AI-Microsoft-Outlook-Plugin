@@ -6,10 +6,6 @@
   xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
   xsi:type="MailApp">
 
-  <!-- ===================== -->
-  <!-- BASIC METADATA        -->
-  <!-- ===================== -->
-
   <Id>ad030d55-f87e-4abf-ae0c-07aad7369fab</Id>
   <Version>1.0.0.0</Version>
   <ProviderName>Ruairi Bradley</ProviderName>
@@ -22,19 +18,11 @@
   <HighResolutionIconUrl DefaultValue="https://localhost:8443/assets/icon-64.png"/>
   <SupportUrl DefaultValue="https://localhost:8443/"/>
 
-  <!-- ===================== -->
-  <!-- SECURITY / DOMAINS    -->
-  <!-- ===================== -->
-
   <AppDomains>
     <AppDomain>localhost</AppDomain>
     <AppDomain>login.microsoftonline.com</AppDomain>
     <AppDomain>graph.microsoft.com</AppDomain>
   </AppDomains>
-
-  <!-- ===================== -->
-  <!-- HOST + REQUIREMENTS   -->
-  <!-- ===================== -->
 
   <Hosts>
     <Host Name="Mailbox"/>
@@ -45,10 +33,6 @@
       <Set Name="Mailbox" MinVersion="1.8"/>
     </Sets>
   </Requirements>
-
-  <!-- ===================== -->
-  <!-- DEFAULT FORM          -->
-  <!-- ===================== -->
 
   <FormSettings>
     <Form xsi:type="ItemRead">
@@ -67,10 +51,6 @@
 
   <DisableEntityHighlighting>true</DisableEntityHighlighting>
 
-  <!-- ===================== -->
-  <!-- VERSION OVERRIDES     -->
-  <!-- ===================== -->
-
   <VersionOverrides
     xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
     xsi:type="VersionOverridesV1_1">
@@ -79,7 +59,6 @@
       <Host xsi:type="MailHost">
         <DesktopFormFactor>
 
-          <!-- Required even if empty -->
           <FunctionFile resid="functionFile"/>
 
           <ExtensionPoint xsi:type="MessageReadCommandSurface">
@@ -102,7 +81,6 @@
               <Action xsi:type="ShowTaskpane">
                 <SourceLocation resid="taskpaneUrl"/>
               </Action>
-
             </OfficeCommand>
           </ExtensionPoint>
 
@@ -110,12 +88,7 @@
       </Host>
     </Hosts>
 
-    <!-- ===================== -->
-    <!-- RESOURCES             -->
-    <!-- ===================== -->
-
     <Resources>
-
       <bt:Images>
         <bt:Image id="icon16" DefaultValue="https://localhost:8443/assets/icon-16.png"/>
         <bt:Image id="icon32" DefaultValue="https://localhost:8443/assets/icon-32.png"/>
@@ -134,7 +107,6 @@
       <bt:LongStrings>
         <bt:String id="cmdDesc" DefaultValue="Open the local, privacy-first assistant sidebar."/>
       </bt:LongStrings>
-
     </Resources>
 
   </VersionOverrides>
