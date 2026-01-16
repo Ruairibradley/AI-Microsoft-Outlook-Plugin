@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { get_access_token, try_get_access_token_silent, get_signed_in_user, sign_out } from "../auth/token";
+import { sign_in_interactive, try_get_access_token_silent, get_signed_in_user, sign_out } from "../auth/token";
 import { ask_question, clear_index, get_folders, get_messages, ingest_messages } from "../api/backend";
 
 type folder = {
@@ -71,6 +71,7 @@ export default function TaskPaneView() {
   async function initialize_session_silent() {
     setError("");
     setStatus("checking session...");
+
     try {
       const token = await try_get_access_token_silent();
       if (!token) {
@@ -102,8 +103,9 @@ export default function TaskPaneView() {
   async function sign_in_clicked() {
     setError("");
     setBusy("signing in...");
+
     try {
-      const token = await get_access_token();
+      const token = await sign_in_interactive();
       setTokenOk(true);
       setAccessToken(token);
 
@@ -127,10 +129,11 @@ export default function TaskPaneView() {
   async function sign_out_clicked() {
     setError("");
     setBusy("signing out...");
+
     try {
       await sign_out();
 
-      // Reset local UI state after MSAL cache is cleared.
+      // Reset UI state
       setTokenOk(false);
       setAccessToken("");
       setUserLabel("");
