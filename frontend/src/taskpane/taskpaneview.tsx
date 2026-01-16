@@ -159,7 +159,7 @@ export default function TaskPaneView() {
     setFolderId(fid);
     setMessages([]);
     setSelectedIds(new Set());
-    setShow_consent(false);
+    setShowConsent(false); // FIX: correct setter name
     setConsentChecked(false);
 
     if (!fid) return;
