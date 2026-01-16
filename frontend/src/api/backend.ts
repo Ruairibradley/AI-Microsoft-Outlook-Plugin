@@ -1,7 +1,4 @@
 const configuredBase = (import.meta.env.VITE_BACKEND_URL as string) || "";
-
-// If VITE_BACKEND_URL is empty, we use same-origin (recommended for Outlook Classic).
-// If set (e.g., https://localhost:8443), we use that.
 const backendBase = configuredBase.replace(/\/+$/, "");
 
 async function backend_fetch(path: string, accessToken: string, options: RequestInit = {}) {
@@ -21,7 +18,6 @@ async function backend_fetch(path: string, accessToken: string, options: Request
     throw new Error(`backend ${res.status}: ${text}`);
   }
 
-  // Some endpoints return JSON always in your backend.
   return res.json();
 }
 
@@ -34,17 +30,23 @@ export function get_messages(accessToken: string, folder_id: string, top: number
   return backend_fetch(`/graph/messages?${q}`, accessToken);
 }
 
-export function ingest_messages(accessToken: string, passphrase: string, folder_id: string, message_ids: string[]) {
+export function ingest_messages(accessToken: string, folder_id: string, message_ids: string[]) {
   return backend_fetch("/ingest", accessToken, {
     method: "POST",
-    body: JSON.stringify({ passphrase, folder_id, message_ids })
+    body: JSON.stringify({
+      folder_id,
+      message_ids
+    })
   });
 }
 
-export function ask_question(accessToken: string, question: string, passphrase: string, n_results: number = 4) {
+export function ask_question(accessToken: string, question: string, n_results: number = 4) {
   return backend_fetch("/query", accessToken, {
     method: "POST",
-    body: JSON.stringify({ question, passphrase, n_results })
+    body: JSON.stringify({
+      question,
+      n_results
+    })
   });
 }
 

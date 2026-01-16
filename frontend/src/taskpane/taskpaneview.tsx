@@ -41,9 +41,6 @@ export default function TaskPaneView() {
 
   const [user_label, setUserLabel] = useState<string>("");
 
-  const [passphrase, setPassphrase] = useState("");
-  const passphrase_ok = passphrase.length >= 8;
-
   const [folders, setFolders] = useState<folder[]>([]);
   const [folder_id, setFolderId] = useState("");
   const [messages, setMessages] = useState<graph_message[]>([]);
@@ -60,7 +57,6 @@ export default function TaskPaneView() {
 
   const [busy, setBusy] = useState<string>("");
 
-  // ---------- authentication + initial folders ----------
   async function load_folders_with_token(token: string) {
     setBusy("loading folders...");
     const data = await get_folders(token);
@@ -133,7 +129,6 @@ export default function TaskPaneView() {
     try {
       await sign_out();
 
-      // Reset UI state
       setTokenOk(false);
       setAccessToken("");
       setUserLabel("");
@@ -160,12 +155,11 @@ export default function TaskPaneView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------- messages ----------
   async function load_messages(fid: string) {
     setFolderId(fid);
     setMessages([]);
     setSelectedIds(new Set());
-    setShowConsent(false);
+    setShow_consent(false);
     setConsentChecked(false);
 
     if (!fid) return;
@@ -190,12 +184,10 @@ export default function TaskPaneView() {
     });
   }
 
-  // ---------- ingest ----------
   const privacy_text = useMemo(() => {
     return [
       "You are about to store selected email content locally on this device.",
-      "The application encrypts the stored email text at rest using a passphrase you provide.",
-      "Embeddings (numeric vectors) are stored locally for semantic search.",
+      "This MVP stores the selected email text locally for search and question answering.",
       "No email content is uploaded to a remote server by this tool.",
       "You can clear the local index at any time."
     ].join(" ");
@@ -204,10 +196,6 @@ export default function TaskPaneView() {
   async function run_ingest_confirmed() {
     if (!token_ok || !access_token) {
       alert("Please sign in first.");
-      return;
-    }
-    if (!passphrase_ok) {
-      alert("Passphrase must be at least 8 characters.");
       return;
     }
     if (!folder_id) {
@@ -219,10 +207,10 @@ export default function TaskPaneView() {
       return;
     }
 
-    setBusy("ingesting (encrypting + indexing locally)...");
+    setBusy("ingesting (storing + indexing locally)...");
     setError("");
     try {
-      await ingest_messages(access_token, passphrase, folder_id, Array.from(selected_ids));
+      await ingest_messages(access_token, folder_id, Array.from(selected_ids));
       setAnswer("Ingestion complete. You can now ask questions.");
       setSources([]);
       setShowConsent(false);
@@ -234,14 +222,9 @@ export default function TaskPaneView() {
     }
   }
 
-  // ---------- query ----------
   async function run_query() {
     if (!token_ok || !access_token) {
       alert("Please sign in first.");
-      return;
-    }
-    if (!passphrase_ok) {
-      alert("Passphrase must be at least 8 characters.");
       return;
     }
     const q = question.trim();
@@ -250,7 +233,7 @@ export default function TaskPaneView() {
     setBusy("querying local index...");
     setError("");
     try {
-      const res = await ask_question(access_token, q, passphrase, 4);
+      const res = await ask_question(access_token, q, 4);
       setAnswer(res.answer || "");
       setSources((res.sources || []) as source[]);
     } catch (e: any) {
@@ -278,7 +261,6 @@ export default function TaskPaneView() {
     }
   }
 
-  // ---------- render ----------
   return (
     <div style={{ fontFamily: "Segoe UI, Arial", padding: 12, lineHeight: 1.35 }}>
       <h2 style={{ marginTop: 0 }}>Outlook Privacy Assistant</h2>
@@ -306,20 +288,6 @@ export default function TaskPaneView() {
 
       <hr />
 
-      <h3>Local encryption passphrase</h3>
-      <input
-        type="password"
-        value={passphrase}
-        onChange={(e) => setPassphrase(e.target.value)}
-        placeholder="min 8 characters"
-        style={{ width: "100%" }}
-      />
-      <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-        Required to encrypt/decrypt your local email index.
-      </div>
-
-      <hr />
-
       <h3>Ingest emails</h3>
 
       <div style={{ marginBottom: 6 }}>
@@ -340,7 +308,7 @@ export default function TaskPaneView() {
       </div>
 
       <div style={{ fontSize: 12, opacity: 0.8 }}>
-        Select individual emails to ingest. The selected emails will be encrypted and stored locally.
+        Select individual emails to ingest. The selected emails will be stored locally.
       </div>
 
       <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid #ddd", marginTop: 8, padding: 6 }}>
@@ -350,11 +318,7 @@ export default function TaskPaneView() {
             const checked = selected_ids.has(m.id);
             return (
               <label key={m.id} style={{ display: "block", padding: "6px 4px", borderBottom: "1px solid #eee" }}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle_select(m.id)}
-                />{" "}
+                <input type="checkbox" checked={checked} onChange={() => toggle_select(m.id)} />{" "}
                 <strong>{m.subject || "(no subject)"}</strong>
                 <div style={{ fontSize: 12, opacity: 0.85 }}>
                   {from} — {m.receivedDateTime || ""}
@@ -391,21 +355,15 @@ export default function TaskPaneView() {
               checked={consent_checked}
               onChange={(e) => setConsentChecked(e.target.checked)}
             />{" "}
-            I understand and consent to local encrypted storage.
+            I understand and consent to local storage.
           </label>
 
-          <button disabled={!consent_checked || !passphrase_ok} onClick={() => run_ingest_confirmed()}>
+          <button disabled={!consent_checked} onClick={() => run_ingest_confirmed()}>
             confirm ingestion
           </button>{" "}
           <button onClick={() => setShowConsent(false)}>
             cancel
           </button>
-
-          {!passphrase_ok && (
-            <div style={{ marginTop: 8, fontSize: 12, color: "#900" }}>
-              Passphrase must be at least 8 characters before ingestion.
-            </div>
-          )}
         </div>
       )}
 
@@ -420,7 +378,7 @@ export default function TaskPaneView() {
         placeholder="Ask a question about your indexed emails..."
       />
       <div style={{ marginTop: 8 }}>
-        <button onClick={() => run_query()} disabled={!token_ok || !passphrase_ok}>
+        <button onClick={() => run_query()} disabled={!token_ok}>
           ask
         </button>{" "}
         <button onClick={() => run_clear()} disabled={!token_ok}>

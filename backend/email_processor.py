@@ -6,10 +6,10 @@ from typing import Dict, Any, List, Optional, Tuple
 from .chroma_service import get_client
 from .database import get_conn, init_db
 from .embedding_service import embed_texts
-from .encryption_utils import encrypt_text, decrypt_text
 from .timing_utils import timer
 
 COLLECTION_NAME = "emails"
+
 
 def _normalize_message(m: Dict[str, Any]) -> Dict[str, Any]:
     sender = ""
@@ -23,7 +23,7 @@ def _normalize_message(m: Dict[str, Any]) -> Dict[str, Any]:
     weblink = m.get("webLink") or ""
     body_preview = m.get("bodyPreview") or ""
 
-    # What we embed & store (MVP privacy-safe; expand to body.content later if needed)
+    # What we store & embed (MVP; can expand to full body later)
     content = f"Subject: {subject}\nFrom: {sender}\nReceived: {received_dt}\n\n{body_preview}".strip()
 
     return {
@@ -35,7 +35,12 @@ def _normalize_message(m: Dict[str, Any]) -> Dict[str, Any]:
         "content": content,
     }
 
-def ingest_messages(messages: List[Dict[str, Any]], passphrase: str, folder_id: Optional[str] = None, log_timings: bool = False) -> Dict[str, Any]:
+
+def ingest_messages(
+    messages: List[Dict[str, Any]],
+    folder_id: Optional[str] = None,
+    log_timings: bool = False
+) -> Dict[str, Any]:
     timings: Dict[str, Any] = {}
     conn = get_conn()
     init_db(conn)
@@ -47,23 +52,23 @@ def ingest_messages(messages: List[Dict[str, Any]], passphrase: str, folder_id: 
 
     with timer(timings, "sqlite_upsert_ms"):
         for m in normalized:
-            enc = encrypt_text(m["content"], passphrase)
             cur.execute(
                 """
                 INSERT OR REPLACE INTO emails
-                (message_id, folder_id, subject, sender, received_dt, weblink, content_enc)
+                (message_id, folder_id, subject, sender, received_dt, weblink, content)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (m["message_id"], folder_id, m["subject"], m["sender"], m["received_dt"], m["weblink"], enc),
+                (m["message_id"], folder_id, m["subject"], m["sender"], m["received_dt"], m["weblink"], m["content"]),
             )
         conn.commit()
 
+    # Rebuild embedding index from all stored docs (simple MVP behavior)
     with timer(timings, "sqlite_fetch_ms"):
-        cur.execute("SELECT message_id, content_enc FROM emails")
+        cur.execute("SELECT message_id, content FROM emails")
         rows = cur.fetchall()
 
     ids = [r["message_id"] for r in rows]
-    docs = [decrypt_text(r["content_enc"], passphrase) for r in rows]
+    docs = [r["content"] for r in rows]
 
     with timer(timings, "embedding_ms"):
         vectors = np.asarray(embed_texts(docs), dtype=np.float32)
@@ -91,7 +96,12 @@ def ingest_messages(messages: List[Dict[str, Any]], passphrase: str, folder_id: 
 
     return timings
 
-def search_emails(query: str, passphrase: str, n_results: int = 4, log_timings: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+
+def search_emails(
+    query: str,
+    n_results: int = 4,
+    log_timings: bool = False
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     timings: Dict[str, Any] = {}
     client = get_client()
     collection = client.get_or_create_collection(name=COLLECTION_NAME)
@@ -111,14 +121,14 @@ def search_emails(query: str, passphrase: str, n_results: int = 4, log_timings: 
     out: List[Dict[str, Any]] = []
     for i, message_id in enumerate(ids):
         cur.execute(
-            "SELECT message_id, subject, sender, received_dt, weblink, content_enc FROM emails WHERE message_id = ?",
+            "SELECT message_id, subject, sender, received_dt, weblink, content FROM emails WHERE message_id = ?",
             (message_id,),
         )
         row = cur.fetchone()
         if not row:
             continue
 
-        content = decrypt_text(row["content_enc"], passphrase)
+        content = row["content"]
         out.append({
             "message_id": row["message_id"],
             "subject": row["subject"] or "",
@@ -138,6 +148,7 @@ def search_emails(query: str, passphrase: str, n_results: int = 4, log_timings: 
             f.write(json.dumps({"event": "search", **timings}) + "\n")
 
     return out, timings
+
 
 def clear_index() -> Dict[str, Any]:
     conn = get_conn()
