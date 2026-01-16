@@ -2,6 +2,7 @@
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
            xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
            xsi:type="MailApp">
 
   <Id>ad030d55-f87e-4abf-ae0c-07aad7369fab</Id>
@@ -15,7 +16,7 @@
   <HighResolutionIconUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/assets/icon-64.png"/>
   <SupportUrl DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
 
-  <!-- HOSTNAMES ONLY (no scheme, no port) -->
+  <!-- HOSTNAMES ONLY -->
   <AppDomains>
     <AppDomain>calm-river-0a2d7241e.1.azurestaticapps.net</AppDomain>
     <AppDomain>login.microsoftonline.com</AppDomain>
@@ -33,7 +34,6 @@
     </Sets>
   </Requirements>
 
-  <!-- Required for MailApp schema -->
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
@@ -51,23 +51,20 @@
 
   <DisableEntityHighlighting>true</DisableEntityHighlighting>
 
-  <!-- Add-in Commands -->
-  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
-                    xsi:type="VersionOverridesV1_0">
+  <!-- Use v1.1 overrides for best Outlook Classic compatibility -->
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
+                    xsi:type="VersionOverridesV1_1">
 
     <Hosts>
       <Host xsi:type="MailHost">
         <DesktopFormFactor>
 
-          <!-- MUST be a reachable HTTPS page that loads office.js -->
           <FunctionFile resid="functionFile"/>
 
           <ExtensionPoint xsi:type="MessageReadCommandSurface">
             <OfficeCommand>
               <Id>ShowPrivacyAssistant</Id>
-
               <Label resid="cmdLabel"/>
-
               <Supertip>
                 <Title resid="cmdLabel"/>
                 <Description resid="cmdDesc"/>
@@ -82,7 +79,6 @@
               <Action xsi:type="ShowTaskpane">
                 <SourceLocation resid="taskpaneUrl"/>
               </Action>
-
             </OfficeCommand>
           </ExtensionPoint>
 
@@ -98,9 +94,7 @@
       </bt:Images>
 
       <bt:Urls>
-        <!-- Taskpane: your React app entry -->
         <bt:Url id="taskpaneUrl" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/"/>
-        <!-- Function file MUST exist on the deployed site -->
         <bt:Url id="functionFile" DefaultValue="https://calm-river-0a2d7241e.1.azurestaticapps.net/function-file.html"/>
       </bt:Urls>
 
