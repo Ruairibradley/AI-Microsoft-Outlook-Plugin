@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import "./taskpane.css";
 import { sign_in_interactive, try_get_access_token_silent, get_signed_in_user, sign_out } from "../auth/token";
 import {
   ask_question,
@@ -54,6 +55,7 @@ type ChatMsg = {
   text: string;
   created_at_ms: number;
   sources?: source[];
+  sources_open?: boolean; // UI only
 };
 
 function truncate(s: string, n: number) {
@@ -80,16 +82,16 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-function now_iso_local() {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
 function make_id(prefix: string): string {
   const c: any = (globalThis as any).crypto;
   if (c?.randomUUID) return `${prefix}_${c.randomUUID()}`;
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function now_iso_local() {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 // Office.js may not be typed in TS; keep it safe.
@@ -109,8 +111,8 @@ function try_convert_to_outlook_desktop_url(owaUrl: string): string | null {
   return null;
 }
 
-// ------------------- Phase 4: chat persistence -------------------
-const CHAT_TTL_MS = 60 * 60 * 1000; // 1 hour
+// ---------- Phase 4 chat persistence ----------
+const CHAT_TTL_MS = 60 * 60 * 1000;
 const LS_CHAT_KEY = "chat_history";
 const LS_CHAT_TS_KEY = "chat_history_ts";
 
@@ -133,7 +135,8 @@ function load_chat_from_storage(): { msgs: ChatMsg[]; ts_ms: number } | null {
         role: m.role === "assistant" ? "assistant" : "user",
         text: String(m.text || ""),
         created_at_ms: Number(m.created_at_ms || ts_ms),
-        sources: Array.isArray(m.sources) ? m.sources : undefined
+        sources: Array.isArray(m.sources) ? m.sources : undefined,
+        sources_open: false
       }));
 
     return { msgs, ts_ms };
@@ -144,10 +147,18 @@ function load_chat_from_storage(): { msgs: ChatMsg[]; ts_ms: number } | null {
 
 function save_chat_to_storage(msgs: ChatMsg[]) {
   try {
-    localStorage.setItem(LS_CHAT_KEY, JSON.stringify(msgs));
+    // Store without UI-only fields
+    const trimmed = msgs.map((m) => ({
+      id: m.id,
+      role: m.role,
+      text: m.text,
+      created_at_ms: m.created_at_ms,
+      sources: m.sources
+    }));
+    localStorage.setItem(LS_CHAT_KEY, JSON.stringify(trimmed));
     localStorage.setItem(LS_CHAT_TS_KEY, String(Date.now()));
   } catch {
-    // ignore (storage may be blocked)
+    // ignore
   }
 }
 
@@ -161,9 +172,8 @@ function clear_chat_storage() {
 }
 
 export default function TaskPaneView() {
-  // ---------- global UI ----------
+  // ---------- global ----------
   const [screen, setScreen] = useState<Screen>("SIGNIN");
-
   const [status, setStatus] = useState("starting...");
   const [busy, setBusy] = useState<string>("");
 
@@ -180,7 +190,7 @@ export default function TaskPaneView() {
   const [access_token, setAccessToken] = useState<string>("");
   const [user_label, setUserLabel] = useState<string>("");
 
-  // ---------- index status ----------
+  // ---------- index ----------
   const [index_status, setIndexStatus] = useState<IndexStatus | null>(null);
   const [index_panel_open, setIndexPanelOpen] = useState<boolean>(false);
 
@@ -202,10 +212,26 @@ export default function TaskPaneView() {
     }
   }
 
-  // ---------- Phase 4 chat state ----------
+  // ---------- chat state ----------
   const [chat_state, setChatState] = useState<ChatState>("EMPTY");
   const [chat_msgs, setChatMsgs] = useState<ChatMsg[]>([]);
   const [chat_expired_note, setChatExpiredNote] = useState<boolean>(false);
+
+  // Chat UI
+  const [draft, setDraft] = useState<string>("");
+  const [sending, setSending] = useState<boolean>(false);
+
+  const transcript_ref = useRef<HTMLDivElement | null>(null);
+
+  function scroll_transcript_to_bottom() {
+    try {
+      const el = transcript_ref.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+    } catch {
+      // ignore
+    }
+  }
 
   function append_chat(msg: ChatMsg) {
     setChatMsgs((prev) => {
@@ -216,12 +242,9 @@ export default function TaskPaneView() {
     setChatState("ACTIVE");
   }
 
-  function replace_last_assistant(msgId: string, newText: string, newSources?: source[]) {
+  function patch_chat_msg(msgId: string, patch: Partial<ChatMsg>) {
     setChatMsgs((prev) => {
-      const next = prev.map((m) => {
-        if (m.id !== msgId) return m;
-        return { ...m, text: newText, sources: newSources };
-      });
+      const next = prev.map((m) => (m.id === msgId ? { ...m, ...patch } : m));
       save_chat_to_storage(next);
       return next;
     });
@@ -230,7 +253,6 @@ export default function TaskPaneView() {
 
   function restore_chat_if_valid(indexExists: boolean) {
     if (!indexExists) {
-      // If no index, we do not restore chat.
       setChatMsgs([]);
       setChatState("EMPTY");
       setChatExpiredNote(false);
@@ -251,7 +273,6 @@ export default function TaskPaneView() {
       setChatState(loaded.msgs.length ? "RESTORED" : "EMPTY");
       setChatExpiredNote(false);
     } else {
-      // expired
       clear_chat_storage();
       setChatMsgs([]);
       setChatState("EMPTY");
@@ -268,20 +289,17 @@ export default function TaskPaneView() {
     if (!indexExists) {
       setScreen("INDEX");
       setIndexPanelOpen(true);
-      // do not restore chat when index is empty
       restore_chat_if_valid(false);
     } else {
       if (nextPreferredScreen) setScreen(nextPreferredScreen);
       else if (screen === "SIGNIN") setScreen("CHAT");
-
-      // Phase 4: restore chat once we know index exists
       restore_chat_if_valid(true);
     }
 
     await refresh_ingestions();
   }
 
-  // ---------- graph data ----------
+  // ---------- graph ----------
   const [folders, setFolders] = useState<folder[]>([]);
   const [folder_filter, setFolderFilter] = useState("");
 
@@ -295,7 +313,14 @@ export default function TaskPaneView() {
   const [ingest_mode, setIngestMode] = useState<IngestMode>("FOLDERS");
 
   const [selected_folder_ids, setSelectedFolderIds] = useState<Set<string>>(new Set());
-  const [folder_limit, setFolderLimit] = useState<number>(100);
+
+  // Per-folder limit: use a string input state so it doesn’t “snap back”
+  const [folder_limit_input, setFolderLimitInput] = useState<string>("100");
+  const folder_limit = useMemo(() => {
+    const n = Number(folder_limit_input);
+    if (!Number.isFinite(n) || n <= 0) return 100;
+    return Math.max(1, Math.min(2000, Math.floor(n)));
+  }, [folder_limit_input]);
 
   const [selected_email_ids, setSelectedEmailIds] = useState<Set<string>>(new Set());
 
@@ -311,7 +336,6 @@ export default function TaskPaneView() {
   const [cancel_summary, setCancelSummary] = useState<string>("");
   const [complete_summary, setCompleteSummary] = useState<string>("");
 
-  // abort only affects FETCHING loop
   const abort_ref = useRef<AbortController | null>(null);
   const cancel_requested_ref = useRef<boolean>(false);
 
@@ -327,22 +351,26 @@ export default function TaskPaneView() {
 
   const run_ingestion_id_ref = useRef<string>("");
 
-  // ---------- clear index modal ----------
+  // ---------- clear modal ----------
   const [clear_modal_open, setClearModalOpen] = useState(false);
   const [clear_confirm_checked, setClearConfirmChecked] = useState(false);
 
-  // ---------- consent text ----------
-  const privacy_text = useMemo(() => {
-    return [
-      "You are about to store selected email content locally on this device.",
-      "This tool stores selected email text locally for search and question answering.",
-      "No email content is uploaded to a remote server by this tool.",
-      "You can clear the local index at any time."
-    ].join(" ");
+  // ---------- guidance copy (improved) ----------
+  const consent_copy = useMemo(() => {
+    return {
+      bullets: [
+        "Selected email text is stored locally on this device to enable search and question answering.",
+        "Your indexed email text is not uploaded by this tool to a remote server.",
+        "You can clear the local index at any time."
+      ],
+      largeWarning:
+        "Large selections can take several minutes. Outlook may feel slower while indexing."
+    };
   }, []);
 
+  // ---------- startup ----------
   async function load_folders_with_token(token: string) {
-    setBusy("loading folders...");
+    setBusy("Loading folders…");
     const data = await get_folders(token);
     setFolders((data.folders || []) as folder[]);
     setBusy("");
@@ -350,7 +378,7 @@ export default function TaskPaneView() {
 
   async function initialize() {
     set_error("");
-    setStatus("checking session...");
+    setStatus("Checking session…");
     setBusy("");
 
     try {
@@ -361,7 +389,7 @@ export default function TaskPaneView() {
         setUserLabel("");
         setIndexStatus(null);
         setScreen("SIGNIN");
-        setStatus("not signed in");
+        setStatus("Not signed in");
         return;
       }
 
@@ -371,21 +399,21 @@ export default function TaskPaneView() {
       const who = await get_signed_in_user();
       setUserLabel(who?.username || who?.name || "");
 
-      setStatus("loading local index status...");
+      setStatus("Loading local index status…");
       await refresh_index_status();
 
-      setStatus("loading folders...");
+      setStatus("Loading folders…");
       await load_folders_with_token(token);
 
-      setStatus("ready");
+      setStatus("Ready");
     } catch (e: any) {
       setTokenOk(false);
       setAccessToken("");
       setUserLabel("");
       setIndexStatus(null);
       setScreen("SIGNIN");
-      setStatus("error");
-      set_error("Initialization failed. Please try signing in again.", String(e?.message || e));
+      setStatus("Error");
+      set_error("Initialization failed. Please sign in again.", String(e?.message || e));
     }
   }
 
@@ -394,9 +422,17 @@ export default function TaskPaneView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Keep transcript pinned to bottom on new messages (when user is near bottom)
+  useEffect(() => {
+    // Basic: always scroll to bottom after new message; adequate for MVP
+    scroll_transcript_to_bottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat_msgs.length]);
+
+  // ---------- auth actions ----------
   async function sign_in_clicked() {
     set_error("");
-    setBusy("signing in...");
+    setBusy("Signing in…");
     try {
       const token = await sign_in_interactive();
       setTokenOk(true);
@@ -405,20 +441,20 @@ export default function TaskPaneView() {
       const who = await get_signed_in_user();
       setUserLabel(who?.username || who?.name || "");
 
-      setStatus("loading local index status...");
+      setStatus("Loading local index status…");
       await refresh_index_status();
 
-      setStatus("loading folders...");
+      setStatus("Loading folders…");
       await load_folders_with_token(token);
 
-      setStatus("ready");
+      setStatus("Ready");
     } catch (e: any) {
       setTokenOk(false);
       setAccessToken("");
       setUserLabel("");
       setIndexStatus(null);
       setScreen("SIGNIN");
-      setStatus("error");
+      setStatus("Error");
       set_error("Sign in failed. Please try again.", String(e?.message || e));
     } finally {
       setBusy("");
@@ -427,7 +463,7 @@ export default function TaskPaneView() {
 
   async function sign_out_clicked() {
     set_error("");
-    setBusy("signing out...");
+    setBusy("Signing out…");
     try {
       await sign_out();
 
@@ -438,16 +474,15 @@ export default function TaskPaneView() {
       setFolders([]);
       reset_ingest_state();
 
-      // Phase 4: clear chat storage on sign-out (prevents cross-account restore confusion)
       clear_chat_storage();
       setChatMsgs([]);
       setChatState("EMPTY");
       setChatExpiredNote(false);
 
       setScreen("SIGNIN");
-      setStatus("not signed in");
+      setStatus("Not signed in");
     } catch (e: any) {
-      setStatus("error");
+      setStatus("Error");
       set_error("Sign out failed.", String(e?.message || e));
     } finally {
       setBusy("");
@@ -458,7 +493,7 @@ export default function TaskPaneView() {
     setIngestStep("SELECT");
     setIngestMode("FOLDERS");
     setSelectedFolderIds(new Set());
-    setFolderLimit(100);
+    setFolderLimitInput("100");
 
     setEmailFolderId("");
     setMessages([]);
@@ -485,6 +520,7 @@ export default function TaskPaneView() {
     run_ingestion_id_ref.current = "";
   }
 
+  // ---------- selection helpers ----------
   const index_empty = (index_status?.indexed_count || 0) <= 0;
 
   const filtered_folders = useMemo(() => {
@@ -552,6 +588,7 @@ export default function TaskPaneView() {
     };
   }, [selected_folder_ids, selected_email_ids, folders, ingest_mode, folder_limit]);
 
+  // ---------- messages loading ----------
   async function load_email_folder(fid: string) {
     setEmailFolderId(fid);
     setMessages([]);
@@ -562,7 +599,7 @@ export default function TaskPaneView() {
     if (!fid) return;
     if (!token_ok || !access_token) return;
 
-    setBusy("loading messages...");
+    setBusy("Loading emails…");
     set_error("");
 
     try {
@@ -570,7 +607,7 @@ export default function TaskPaneView() {
       setMessages((data.value || []) as graph_message[]);
       setMessagesNextLink((data as any)["@odata.nextLink"] || null);
     } catch (e: any) {
-      set_error("Failed to load messages. Please try again.", String(e?.message || e));
+      set_error("Failed to load emails. Please try again.", String(e?.message || e));
     } finally {
       setBusy("");
     }
@@ -580,7 +617,7 @@ export default function TaskPaneView() {
     if (!token_ok || !access_token) return;
     if (!messages_next_link) return;
 
-    setBusy("loading more messages...");
+    setBusy("Loading more emails…");
     set_error("");
 
     try {
@@ -589,12 +626,13 @@ export default function TaskPaneView() {
       setMessages((prev) => [...prev, ...page]);
       setMessagesNextLink((data as any)["@odata.nextLink"] || null);
     } catch (e: any) {
-      set_error("Failed to load more messages. Please try again.", String(e?.message || e));
+      set_error("Failed to load more emails. Please try again.", String(e?.message || e));
     } finally {
       setBusy("");
     }
   }
 
+  // ---------- wizard transitions ----------
   function can_continue_from_select(): boolean {
     if (ingest_mode === "FOLDERS") return selected_folder_ids.size > 0;
     return selected_email_ids.size > 0;
@@ -614,6 +652,7 @@ export default function TaskPaneView() {
     setIngestStep("SELECT");
   }
 
+  // Cancel pauses at checkpoints
   function cancel_clicked() {
     pause_requested_ref.current = true;
     setCancelConfirmOpen(true);
@@ -636,8 +675,19 @@ export default function TaskPaneView() {
 
     if (abort_ref.current) abort_ref.current.abort();
 
-    setCancelSummary("Indexing cancelled. Some items may already be indexed.");
+    setCancelSummary("Indexing cancelled. Some emails may already be indexed.");
     setIngestStep("CANCELLED");
+  }
+
+  function progress_done_now(): number {
+    return run_phase === "FETCHING" ? fetch_done : ingest_done;
+  }
+
+  function phase_label(p: Phase): { title: string; desc: string } {
+    if (p === "FETCHING") return { title: "Fetching emails", desc: "Collecting selected messages from Microsoft Graph…" };
+    if (p === "STORING") return { title: "Storing locally", desc: "Saving selected email text on this device…" };
+    if (p === "INDEXING") return { title: "Indexing for search", desc: "Building the local search index…" };
+    return { title: "Done", desc: "Index updated." };
   }
 
   async function run_ingestion() {
@@ -718,7 +768,7 @@ export default function TaskPaneView() {
         message_ids = uniq(all_ids);
       }
 
-      if (!message_ids.length) throw new Error("No messages selected.");
+      if (!message_ids.length) throw new Error("No emails selected.");
 
       // make FETCHING visible
       {
@@ -753,12 +803,7 @@ export default function TaskPaneView() {
         setIngestDone(ingested);
       }
 
-      {
-        const elapsed = Date.now() - phaseStart;
-        if (elapsed < MIN_PHASE_MS) await sleep(MIN_PHASE_MS - elapsed);
-      }
-
-      // 3) INDEXING: show brief phase
+      // 3) INDEXING (brief)
       setRunPhase("INDEXING");
       phaseStart = Date.now();
       {
@@ -776,21 +821,21 @@ export default function TaskPaneView() {
         ? `Indexed ${message_ids.length} selected emails.`
         : `Indexed ${message_ids.length} emails from selected folder(s).`;
 
-      setCompleteSummary(`${summary} Index updated at ${fmt_dt(st.last_updated)}.`);
+      setCompleteSummary(`${summary} Updated: ${fmt_dt(st.last_updated)}.`);
       setIngestStep("COMPLETE");
     } catch (e: any) {
       const msg = String(e?.message || e);
 
       if (msg === "CANCELLED_BY_USER") {
         await refresh_index_status();
-        setCancelSummary("Indexing cancelled. Some items may already be indexed.");
+        setCancelSummary("Indexing cancelled. Some emails may already be indexed.");
         setIngestStep("CANCELLED");
         return;
       }
 
       setIngestStep("SELECT");
       set_error(
-        "Indexing failed. If the local index is unavailable, clear local index and try again.",
+        "Indexing failed. Try again, or clear the local index and re-ingest.",
         msg
       );
     } finally {
@@ -805,7 +850,7 @@ export default function TaskPaneView() {
     if (!token_ok || !access_token) return;
 
     set_error("");
-    setBusy("clearing local index...");
+    setBusy("Clearing…");
 
     try {
       if (selected_clear_mode === "ALL") {
@@ -820,7 +865,6 @@ export default function TaskPaneView() {
       setClearModalOpen(false);
       setClearConfirmChecked(false);
 
-      // Phase 4: if index is cleared entirely, also clear chat (prevents orphaned transcript)
       if (selected_clear_mode === "ALL") {
         clear_chat_storage();
         setChatMsgs([]);
@@ -834,10 +878,7 @@ export default function TaskPaneView() {
     }
   }
 
-  // ------------- Phase 4: Chat send / persist / restore -------------
-  const [draft, setDraft] = useState<string>("");
-  const [sending, setSending] = useState<boolean>(false);
-
+  // ---------- Phase 4 Chat send with better feedback ----------
   async function send_chat() {
     if (!token_ok || !access_token) {
       alert("Please sign in first.");
@@ -864,24 +905,37 @@ export default function TaskPaneView() {
 
     setDraft("");
 
-    const placeholderId = make_id("chat");
+    const assistantId = make_id("chat");
     const assistantPlaceholder: ChatMsg = {
-      id: placeholderId,
+      id: assistantId,
       role: "assistant",
-      text: "Working…",
-      created_at_ms: Date.now()
+      text: "Searching indexed emails…",
+      created_at_ms: Date.now(),
+      sources_open: false
     };
     append_chat(assistantPlaceholder);
+
+    // staged status text (pure UI feedback)
+    const t1 = setTimeout(() => patch_chat_msg(assistantId, { text: "Reading top matches…", sources: [] }), 700);
+    const t2 = setTimeout(() => patch_chat_msg(assistantId, { text: "Drafting answer…", sources: [] }), 1400);
 
     try {
       const res = await ask_question(access_token, q, 4);
       const answer = String(res.answer || "");
-      const srcs = (res.sources || []) as source[];
-      replace_last_assistant(placeholderId, answer || "No answer.", srcs);
+      const allSources = (res.sources || []) as source[];
+      const topSources = allSources.slice(0, 3); // IMPORTANT: only show top 3
+
+      patch_chat_msg(assistantId, {
+        text: answer || "No answer.",
+        sources: topSources,
+        sources_open: false
+      });
     } catch (e: any) {
-      replace_last_assistant(placeholderId, "Query failed. Please try again.", []);
+      patch_chat_msg(assistantId, { text: "Query failed. Please try again.", sources: [] });
       set_error("Query failed. If the local index is unavailable, clear it and re-ingest.", String(e?.message || e));
     } finally {
+      clearTimeout(t1);
+      clearTimeout(t2);
       setSending(false);
     }
   }
@@ -905,124 +959,500 @@ export default function TaskPaneView() {
     }
   }
 
-  // ---------- UI render helpers ----------
+  // ---------- UI blocks ----------
   function render_error() {
     if (!error) return null;
     return (
-      <div style={{ marginTop: 10 }}>
-        <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5" }}>
-          <strong>Error</strong>
-          <div style={{ marginTop: 6, fontSize: 12 }}>{error}</div>
-          {error_details ? (
-            <details style={{ marginTop: 8 }}>
-              <summary style={{ cursor: "pointer", fontSize: 12 }}>Show details</summary>
-              <pre style={{ whiteSpace: "pre-wrap", marginTop: 8, fontSize: 12 }}>{error_details}</pre>
-            </details>
-          ) : null}
-        </div>
+      <div className="op-banner op-bannerDanger" style={{ marginTop: 10 }}>
+        <div className="op-bannerTitle">Something went wrong</div>
+        <div className="op-bannerText">{error}</div>
+        {error_details ? (
+          <details style={{ marginTop: 8 }}>
+            <summary style={{ cursor: "pointer", fontSize: 12 }}>Show details</summary>
+            <pre style={{ whiteSpace: "pre-wrap", marginTop: 8, fontSize: 12 }}>{error_details}</pre>
+          </details>
+        ) : null}
       </div>
     );
   }
 
   function render_header() {
     return (
-      <div style={{ marginBottom: 10 }}>
-        <h2 style={{ marginTop: 0, marginBottom: 6 }}>Outlook Privacy Assistant</h2>
-        <div style={{ fontSize: 12, opacity: 0.85 }}>
-          <strong>Status:</strong> {status} {busy ? `— ${busy}` : ""}
-          {token_ok && user_label ? <span> — <strong>Signed in:</strong> {user_label}</span> : null}
+      <div className="op-header">
+        <div className="op-title">
+          Outlook Privacy Assistant
+          <span className="op-badge">Local</span>
+        </div>
+
+        <div className="op-subline">
+          <span><strong>Status:</strong> {status}</span>
+          {busy ? <span>• {busy}</span> : null}
+          {token_ok && user_label ? <span>• <strong>Signed in:</strong> {user_label}</span> : null}
         </div>
 
         {token_ok ? (
-          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-            <button
-              onClick={() => setScreen("CHAT")}
-              disabled={(index_status?.indexed_count || 0) <= 0}
-              title={(index_status?.indexed_count || 0) <= 0 ? "Index emails first" : "Go to chat"}
-            >
+          <div className="op-nav">
+            <button className="op-btn op-btnGhost" onClick={() => setScreen("CHAT")} disabled={(index_status?.indexed_count || 0) <= 0}>
               Chat
             </button>
-            <button onClick={() => setScreen("INDEX")}>Index management</button>
-            <button onClick={() => sign_out_clicked()}>Sign out</button>
+            <button className="op-btn op-btnGhost" onClick={() => setScreen("INDEX")}>
+              Index
+            </button>
+            <button className="op-btn op-btnDanger" onClick={() => sign_out_clicked()}>
+              Sign out
+            </button>
           </div>
         ) : null}
 
         {render_error()}
-        <hr style={{ marginTop: 12 }} />
       </div>
     );
   }
 
   function render_signin() {
     return (
-      <div>
-        <div style={{ fontSize: 12, opacity: 0.85 }}>
-          Sign in to access Microsoft Graph and fetch emails for local indexing.
+      <div className="op-card op-fit">
+        <div className="op-cardHeader">
+          <div>
+            <div className="op-cardTitle">Sign in</div>
+            <div className="op-muted">Sign in to fetch emails with Microsoft Graph and index locally.</div>
+          </div>
         </div>
-        <div style={{ marginTop: 10 }}>
-          <button onClick={() => sign_in_clicked()}>Sign in</button>
+        <div className="op-cardBody">
+          <button className="op-btn op-btnPrimary" onClick={() => sign_in_clicked()}>
+            Sign in
+          </button>
+          <div className="op-helpNote">
+            Tip: If email links fail in your browser, ensure you’re signed into the same mailbox in Outlook on the web.
+          </div>
         </div>
       </div>
     );
   }
 
-  function progress_done_now(): number {
-    return run_phase === "FETCHING" ? fetch_done : ingest_done;
-  }
-
-  function render_phase_bar() {
-    const phases: { key: Phase; label: string }[] = [
-      { key: "FETCHING", label: "Fetching emails" },
-      { key: "STORING", label: "Storing locally" },
-      { key: "INDEXING", label: "Indexing for search" },
-      { key: "DONE", label: "Done" },
-    ];
-
-    const currentIdx = phases.findIndex((p) => p.key === run_phase);
-    const doneNow = progress_done_now();
+  function render_indexed_panel() {
+    if (index_empty) {
+      return (
+        <div className="op-banner op-bannerStrong" style={{ marginBottom: 10 }}>
+          <div className="op-bannerTitle">No emails indexed yet</div>
+          <div className="op-bannerText">Select folders or emails to build a local index.</div>
+        </div>
+      );
+    }
 
     return (
-      <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa" }}>
-        <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
-          <strong>Progress</strong>
+      <div className="op-banner" style={{ marginBottom: 10 }}>
+        <div className="op-bannerTitle">Index is ready</div>
+        <div className="op-bannerText">
+          Indexed <strong>{index_status?.indexed_count ?? 0}</strong> emails • Updated <strong>{fmt_dt(index_status?.last_updated)}</strong>
         </div>
+      </div>
+    );
+  }
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
-          {phases.map((p, idx) => {
-            const active = idx === currentIdx;
-            const done = idx < currentIdx;
-            return (
-              <span
-                key={p.key}
-                style={{
-                  padding: "2px 6px",
-                  border: "1px solid #ddd",
-                  background: active ? "#fff" : done ? "#f0f0f0" : "#fafafa"
-                }}
+  function render_wizard_steps(active: IngestStep) {
+    const steps: { key: IngestStep; label: string }[] = [
+      { key: "SELECT", label: "Select" },
+      { key: "PREVIEW", label: "Confirm" },
+      { key: "RUNNING", label: "Progress" },
+      { key: "COMPLETE", label: "Done" }
+    ];
+
+    return (
+      <div className="op-wizardSteps">
+        {steps.map((s) => (
+          <span key={s.key} className={`op-chip ${s.key === active ? "op-chipActive" : ""}`}>
+            {s.label}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  function render_select_step() {
+    return (
+      <div className="op-fit">
+        <div style={{ marginBottom: 10 }}>
+          {render_indexed_panel()}
+          <div className="op-row" style={{ justifyContent: "space-between" }}>
+            <div>
+              <div className="op-cardTitle">Index management</div>
+              <div className="op-muted">Choose folders or specific emails to index locally.</div>
+            </div>
+
+            <div className="op-seg" role="tablist" aria-label="Index mode">
+              <button
+                className="op-segBtn"
+                aria-selected={ingest_mode === "FOLDERS"}
+                onClick={() => setIngestMode("FOLDERS")}
               >
-                {done ? "✓ " : active ? "→ " : ""}{p.label}
-              </span>
-            );
-          })}
+                Folders
+              </button>
+              <button
+                className="op-segBtn"
+                aria-selected={ingest_mode === "EMAILS"}
+                onClick={() => setIngestMode("EMAILS")}
+              >
+                Emails
+              </button>
+            </div>
+          </div>
+
+          {render_wizard_steps("SELECT")}
         </div>
 
-        <div style={{ marginTop: 10 }}>
-          <div style={{ height: 8, background: "#eee", borderRadius: 4, overflow: "hidden" }}>
-            <div
-              style={{
-                height: 8,
-                width: run_total ? `${Math.min(100, Math.round((doneNow / Math.max(1, run_total)) * 100))}%` : "25%",
-                background: "#bbb"
-              }}
-            />
+        <div className="op-fitBody">
+          {ingest_mode === "FOLDERS" ? (
+            <div className="op-card" style={{ padding: 12 }}>
+              <div className="op-row" style={{ alignItems: "flex-end" }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div className="op-label">Folder search</div>
+                  <input className="op-input" value={folder_filter} onChange={(e) => setFolderFilter(e.target.value)} placeholder="Filter folders…" />
+                </div>
+
+                <div style={{ width: 140 }}>
+                  <div className="op-label">Per-folder limit</div>
+                  <input
+                    className="op-input"
+                    value={folder_limit_input}
+                    inputMode="numeric"
+                    onChange={(e) => setFolderLimitInput(e.target.value)}
+                    onBlur={() => {
+                      // commit clamp on blur
+                      const n = Number(folder_limit_input);
+                      if (!Number.isFinite(n) || n <= 0) setFolderLimitInput("100");
+                      else setFolderLimitInput(String(Math.max(1, Math.min(2000, Math.floor(n)))));
+                    }}
+                    placeholder="100"
+                  />
+                </div>
+              </div>
+
+              <div className="op-spacer" />
+
+              <div className="op-list">
+                <div className="op-listScroll">
+                  {filtered_folders.length ? (
+                    filtered_folders.map((f) => {
+                      const checked = selected_folder_ids.has(f.id);
+                      return (
+                        <div key={f.id} className="op-item">
+                          <div className="op-itemRow">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggle_folder(f.id)}
+                              style={{ marginTop: 2 }}
+                            />
+                            <div className="op-itemMain">
+                              <div className="op-itemTitle">{f.displayName}</div>
+                              <div className="op-itemMeta">
+                                {typeof f.totalItemCount === "number" ? `${f.totalItemCount} total` : "Count unavailable"} • Indexing up to {folder_limit}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="op-item">
+                      <div className="op-muted">No folders match your search.</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="op-spacer" />
+              <div className="op-banner">
+                <div className="op-bannerTitle">Selection summary</div>
+                <div className="op-bannerText">
+                  Folders: <strong>{selection_summary.folderCount}</strong> • Approx emails: <strong>{selection_summary.effectiveTotal}</strong>
+                </div>
+                {selection_summary.large ? (
+                  <div className="op-bannerText" style={{ marginTop: 6 }}>
+                    <strong style={{ color: "var(--warning)" }}>Large selection:</strong> {consent_copy.largeWarning}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="op-card" style={{ padding: 12 }}>
+              <div className="op-row">
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div className="op-label">Folder</div>
+                  <select
+                    className="op-select"
+                    value={email_folder_id}
+                    onChange={(e) => load_email_folder(e.target.value)}
+                    disabled={!token_ok}
+                  >
+                    <option value="">Select…</option>
+                    {folders.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.displayName} {typeof f.totalItemCount === "number" ? `(${f.totalItemCount})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div className="op-label">Search emails</div>
+                  <input className="op-input" value={messages_filter} onChange={(e) => setMessagesFilter(e.target.value)} placeholder="Filter by subject or sender…" />
+                </div>
+              </div>
+
+              <div className="op-spacer" />
+
+              <div className="op-row">
+                <button className="op-btn" onClick={select_all_filtered_emails} disabled={!filtered_messages.length}>
+                  Select filtered
+                </button>
+                <button className="op-btn" onClick={clear_email_selection} disabled={!selected_email_ids.size}>
+                  Clear selection
+                </button>
+                <button className="op-btn" onClick={load_more_messages} disabled={!messages_next_link}>
+                  Load more
+                </button>
+                <span className="op-muted">
+                  Selected: <strong>{selection_summary.emailCount}</strong>
+                </span>
+              </div>
+
+              <div className="op-spacer" />
+
+              <div className="op-list">
+                <div className="op-listScroll">
+                  {filtered_messages.length ? (
+                    filtered_messages.map((m) => {
+                      const from = m.from?.emailAddress?.address || "";
+                      const checked = selected_email_ids.has(m.id);
+                      return (
+                        <div key={m.id} className="op-item">
+                          <div className="op-itemRow">
+                            <input type="checkbox" checked={checked} onChange={() => toggle_email(m.id)} style={{ marginTop: 2 }} />
+                            <div className="op-itemMain">
+                              <div className="op-itemTitle">{m.subject || "(no subject)"}</div>
+                              <div className="op-itemMeta">{from} • {m.receivedDateTime || ""}</div>
+                              <div className="op-itemPreview">{truncate(m.bodyPreview || "", 140)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="op-item">
+                      <div className="op-muted">{email_folder_id ? "No emails loaded or no matches." : "Select a folder to view emails."}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="op-spacer" />
+              <div className="op-banner">
+                <div className="op-bannerTitle">Selection summary</div>
+                <div className="op-bannerText">
+                  Emails selected: <strong>{selection_summary.emailCount}</strong>
+                </div>
+                {selection_summary.large ? (
+                  <div className="op-bannerText" style={{ marginTop: 6 }}>
+                    <strong style={{ color: "var(--warning)" }}>Large selection:</strong> {consent_copy.largeWarning}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="op-spacer" />
+
+        <div className="op-row" style={{ justifyContent: "space-between" }}>
+          <div className="op-muted">
+            {index_empty ? "Index required before chat." : "You can index more at any time."}
           </div>
-          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-            {run_total ? <span>Processed {doneNow} / {run_total} emails</span> : <span>Processed {doneNow} emails</span>}
+          <button className="op-btn op-btnPrimary" disabled={!can_continue_from_select()} onClick={go_preview}>
+            Continue
+          </button>
+        </div>
+
+        {/* Danger zone stays compact and within screen */}
+        <div className="op-spacer" />
+        <details className="op-card" style={{ padding: 12 }}>
+          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 800, color: "var(--danger)" }}>
+            Danger zone
+          </summary>
+          <div className="op-spacer" />
+          <div className="op-muted">Clear the full index or clear a specific ingestion run.</div>
+          <div className="op-spacer" />
+          <button className="op-btn op-btnDanger" onClick={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}>
+            Clear…
+          </button>
+          {render_clear_modal()}
+        </details>
+      </div>
+    );
+  }
+
+  function render_preview_step() {
+    return (
+      <div className="op-fit">
+        <div style={{ marginBottom: 10 }}>
+          <div className="op-cardTitle">Confirm and start</div>
+          <div className="op-muted">Review your selection and confirm local indexing.</div>
+          {render_wizard_steps("PREVIEW")}
+        </div>
+
+        <div className="op-fitBody">
+          <div className="op-card op-cardBody">
+            <div className="op-banner op-bannerStrong">
+              <div className="op-bannerTitle">What happens next</div>
+              <div className="op-bannerText">
+                We will fetch the selected emails via Microsoft Graph, store their text locally on this device, and build a local search index.
+              </div>
+            </div>
+
+            <div className="op-spacer" />
+
+            <div className="op-banner">
+              <div className="op-bannerTitle">Selection</div>
+              <div className="op-bannerText">
+                Mode: <strong>{ingest_mode === "FOLDERS" ? "Folders" : "Emails"}</strong> • Total (approx): <strong>{selection_summary.effectiveTotal}</strong>
+                {ingest_mode === "FOLDERS" ? <> • Per-folder: <strong>{folder_limit}</strong></> : null}
+              </div>
+            </div>
+
+            {selection_summary.large ? (
+              <div className="op-spacer" />
+            ) : null}
+
+            {selection_summary.large ? (
+              <div className="op-banner op-bannerWarn">
+                <div className="op-bannerTitle">Large selection</div>
+                <div className="op-bannerText">{consent_copy.largeWarning}</div>
+                <div className="op-spacer" />
+                <label className="op-muted" style={{ display: "block" }}>
+                  <input
+                    type="checkbox"
+                    checked={large_ack_checked}
+                    onChange={(e) => setLargeAckChecked(e.target.checked)}
+                    style={{ marginRight: 8 }}
+                  />
+                  I understand this may take several minutes.
+                </label>
+              </div>
+            ) : null}
+
+            <div className="op-spacer" />
+
+            <div className="op-banner">
+              <div className="op-bannerTitle">Consent</div>
+              <ul className="op-muted" style={{ margin: "6px 0 0 18px" }}>
+                {consent_copy.bullets.map((b) => <li key={b}>{b}</li>)}
+              </ul>
+
+              <div className="op-spacer" />
+              <label className="op-muted" style={{ display: "block" }}>
+                <input
+                  type="checkbox"
+                  checked={consent_checked}
+                  onChange={(e) => setConsentChecked(e.target.checked)}
+                  style={{ marginRight: 8 }}
+                />
+                I consent to local storage and indexing.
+              </label>
+            </div>
           </div>
         </div>
 
-        <div style={{ marginTop: 10 }}>
-          <button onClick={cancel_clicked}>Cancel</button>
+        <div className="op-spacer" />
+        <div className="op-row" style={{ justifyContent: "space-between" }}>
+          <button className="op-btn" onClick={back_to_select}>Back</button>
+          <button
+            className="op-btn op-btnPrimary"
+            disabled={!consent_checked || (selection_summary.large && !large_ack_checked)}
+            onClick={run_ingestion}
+          >
+            Start indexing
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function render_running_step() {
+    const doneNow = progress_done_now();
+    const pct = run_total ? Math.min(100, Math.round((doneNow / Math.max(1, run_total)) * 100)) : 20;
+    const p = phase_label(run_phase);
+
+    return (
+      <div className="op-fit">
+        <div style={{ marginBottom: 10 }}>
+          <div className="op-cardTitle">Indexing</div>
+          <div className="op-muted">You can cancel at any time.</div>
+          {render_wizard_steps("RUNNING")}
+        </div>
+
+        <div className="op-fitBody">
+          <div className="op-progressWrap">
+            <div className="op-row" style={{ justifyContent: "space-between" }}>
+              <div>
+                <div className="op-cardTitle">{p.title}</div>
+                <div className="op-muted">{p.desc}</div>
+              </div>
+              <div className="op-row">
+                <div className="op-spinner" aria-hidden="true" />
+                <div className="op-muted">{run_total ? `${doneNow} / ${run_total}` : `${doneNow}`}</div>
+              </div>
+            </div>
+
+            <div className="op-spacer" />
+            <div className="op-progressBar">
+              <div className="op-progressFill" style={{ width: `${pct}%` }} />
+            </div>
+
+            <div className="op-spacer" />
+            <button className="op-btn" onClick={cancel_clicked}>Cancel</button>
+
+            {render_cancel_confirm_modal()}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function render_cancelled_step() {
+    return (
+      <div className="op-fit">
+        <div className="op-banner op-bannerDanger">
+          <div className="op-bannerTitle">Indexing cancelled</div>
+          <div className="op-bannerText">{cancel_summary || "Indexing cancelled. Some emails may already be indexed."}</div>
+        </div>
+
+        <div className="op-spacer" />
+        <div className="op-row">
+          <button className="op-btn op-btnDanger" onClick={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}>
+            Clear…
+          </button>
+          <button className="op-btn" onClick={() => { setCancelSummary(""); cancel_requested_ref.current = false; setIngestStep("SELECT"); }}>
+            Return to selection
+          </button>
+        </div>
+
+        {render_clear_modal()}
+      </div>
+    );
+  }
+
+  function render_complete_step() {
+    return (
+      <div className="op-fit">
+        <div className="op-banner op-bannerStrong">
+          <div className="op-bannerTitle">Index updated</div>
+          <div className="op-bannerText">{complete_summary || "Indexing completed successfully."}</div>
+        </div>
+
+        <div className="op-spacer" />
+        <div className="op-row">
+          <button className="op-btn op-btnPrimary" onClick={() => setScreen("CHAT")}>Go to chat</button>
+          <button className="op-btn" onClick={() => reset_ingest_state()}>Index more</button>
         </div>
       </div>
     );
@@ -1031,14 +1461,13 @@ export default function TaskPaneView() {
   function render_cancel_confirm_modal() {
     if (!cancel_confirm_open) return null;
     return (
-      <div style={{ border: "2px solid #c00", padding: 12, background: "#fff5f5", marginTop: 10 }}>
-        <strong>Cancel indexing now?</strong>
-        <div style={{ fontSize: 12, marginTop: 6 }}>
-          Indexing is paused. Some emails may already be indexed.
-        </div>
-        <div style={{ marginTop: 10 }}>
-          <button onClick={cancel_continue}>Continue indexing</button>{" "}
-          <button onClick={cancel_confirm_now}>Cancel indexing now</button>
+      <div className="op-banner op-bannerDanger" style={{ marginTop: 10 }}>
+        <div className="op-bannerTitle">Cancel indexing now?</div>
+        <div className="op-bannerText">Indexing is paused. Some emails may already be indexed.</div>
+        <div className="op-spacer" />
+        <div className="op-row">
+          <button className="op-btn" onClick={cancel_continue}>Continue</button>
+          <button className="op-btn op-btnDanger" onClick={cancel_confirm_now}>Cancel now</button>
         </div>
       </div>
     );
@@ -1050,70 +1479,71 @@ export default function TaskPaneView() {
     const hasIngestions = ingestions.length > 0;
 
     return (
-      <div style={{ border: "2px solid #c00", padding: 12, background: "#fff5f5", marginTop: 10 }}>
-        <strong>Clear local index?</strong>
+      <div className="op-banner op-bannerDanger" style={{ marginTop: 10 }}>
+        <div className="op-bannerTitle">Clear local index</div>
+        <div className="op-bannerText">Choose what to clear. This cannot be undone.</div>
 
-        <div style={{ marginTop: 10, fontSize: 12 }}>
-          <label style={{ display: "block", marginBottom: 6 }}>
-            <input
-              type="radio"
-              name="clearMode"
-              checked={selected_clear_mode === "ALL"}
-              onChange={() => setSelectedClearMode("ALL")}
-            />{" "}
-            Clear entire index (all ingestions)
-          </label>
+        <div className="op-spacer" />
 
-          <label style={{ display: "block", marginBottom: 6, opacity: hasIngestions ? 1 : 0.5 }}>
-            <input
-              type="radio"
-              name="clearMode"
-              checked={selected_clear_mode === "ONE"}
+        <label className="op-muted" style={{ display: "block", marginBottom: 6 }}>
+          <input
+            type="radio"
+            name="clearMode"
+            checked={selected_clear_mode === "ALL"}
+            onChange={() => setSelectedClearMode("ALL")}
+            style={{ marginRight: 8 }}
+          />
+          Clear entire index
+        </label>
+
+        <label className="op-muted" style={{ display: "block", marginBottom: 6, opacity: hasIngestions ? 1 : 0.5 }}>
+          <input
+            type="radio"
+            name="clearMode"
+            checked={selected_clear_mode === "ONE"}
+            disabled={!hasIngestions}
+            onChange={() => setSelectedClearMode("ONE")}
+            style={{ marginRight: 8 }}
+          />
+          Clear a specific ingestion run
+        </label>
+
+        {selected_clear_mode === "ONE" ? (
+          <div style={{ marginTop: 8 }}>
+            <div className="op-label">Select ingestion</div>
+            <select
+              className="op-select"
+              value={selected_ingestion_id_to_clear}
+              onChange={(e) => setSelectedIngestionIdToClear(e.target.value)}
               disabled={!hasIngestions}
-              onChange={() => setSelectedClearMode("ONE")}
-            />{" "}
-            Clear a specific ingestion run
-          </label>
+            >
+              {ingestions.map((ing) => (
+                <option key={ing.ingestion_id} value={ing.ingestion_id}>
+                  {ing.created_at} — {ing.label} — {ing.email_count} emails
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
 
-          {selected_clear_mode === "ONE" ? (
-            <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>Select ingestion</div>
-              <select
-                style={{ width: "100%" }}
-                value={selected_ingestion_id_to_clear}
-                onChange={(e) => setSelectedIngestionIdToClear(e.target.value)}
-                disabled={!hasIngestions}
-              >
-                {ingestions.map((ing) => (
-                  <option key={ing.ingestion_id} value={ing.ingestion_id}>
-                    {ing.created_at} — {ing.label} — {ing.email_count} emails
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-        </div>
+        <div className="op-spacer" />
 
-        <ul style={{ marginTop: 10, fontSize: 12 }}>
-          <li>Deletes locally stored indexed email text</li>
-          <li>Deletes local search index entries for the selected scope</li>
-          <li>Cannot be undone</li>
-        </ul>
-
-        <label style={{ display: "block", fontSize: 12, marginTop: 8 }}>
+        <label className="op-muted" style={{ display: "block" }}>
           <input
             type="checkbox"
             checked={clear_confirm_checked}
             onChange={(e) => setClearConfirmChecked(e.target.checked)}
-          />{" "}
+            style={{ marginRight: 8 }}
+          />
           I understand this cannot be undone.
         </label>
 
-        <div style={{ marginTop: 10 }}>
-          <button disabled={!clear_confirm_checked} onClick={clear_index_confirmed}>
+        <div className="op-spacer" />
+        <div className="op-row">
+          <button className="op-btn op-btnDanger" disabled={!clear_confirm_checked} onClick={clear_index_confirmed}>
             Clear
-          </button>{" "}
-          <button onClick={() => { setClearModalOpen(false); setClearConfirmChecked(false); }}>
+          </button>
+          <button className="op-btn" onClick={() => { setClearModalOpen(false); setClearConfirmChecked(false); }}>
             Cancel
           </button>
         </div>
@@ -1121,355 +1551,129 @@ export default function TaskPaneView() {
     );
   }
 
-  function render_index_select_scope() {
-    return (
-      <div>
-        {index_empty ? (
-          <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5", marginBottom: 10 }}>
-            <strong>No emails indexed yet</strong>
-            <div style={{ fontSize: 12, marginTop: 6 }}>Select folders or individual emails to index locally.</div>
-          </div>
-        ) : (
-          <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa", marginBottom: 10 }}>
-            <div style={{ fontSize: 12 }}>
-              <strong>Indexed:</strong> {index_status?.indexed_count ?? 0} emails — <strong>Last updated:</strong> {fmt_dt(index_status?.last_updated)}
-            </div>
-          </div>
-        )}
-
-        <h3 style={{ marginTop: 0 }}>Index management</h3>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-          <button onClick={() => setIngestMode("FOLDERS")} disabled={ingest_mode === "FOLDERS"}>Select folders</button>
-          <button onClick={() => setIngestMode("EMAILS")} disabled={ingest_mode === "EMAILS"}>Select emails</button>
-        </div>
-
-        {ingest_mode === "FOLDERS" ? (
-          <div>
-            <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
-              Choose one or more folders. The system will index the latest N emails per folder.
-            </div>
-
-            <label style={{ display: "block", fontSize: 12, opacity: 0.85 }}>Folder filter</label>
-            <input
-              value={folder_filter}
-              onChange={(e) => setFolderFilter(e.target.value)}
-              placeholder="Type to filter folders..."
-              style={{ width: "100%", marginBottom: 8 }}
-            />
-
-            <label style={{ display: "block", fontSize: 12, opacity: 0.85 }}>Per-folder limit (latest emails)</label>
-            <input
-              type="number"
-              value={folder_limit}
-              min={1}
-              max={2000}
-              onChange={(e) => setFolderLimit(Math.max(1, Math.min(2000, Number(e.target.value || 100))))}
-              style={{ width: "100%", marginBottom: 8 }}
-            />
-
-            <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid #ddd", padding: 6 }}>
-              {filtered_folders.map((f) => {
-                const checked = selected_folder_ids.has(f.id);
-                return (
-                  <label key={f.id} style={{ display: "block", padding: "6px 4px", borderBottom: "1px solid #eee" }}>
-                    <input type="checkbox" checked={checked} onChange={() => toggle_folder(f.id)} />{" "}
-                    <strong>{f.displayName}</strong>{" "}
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>
-                      {typeof f.totalItemCount === "number" ? `(${f.totalItemCount})` : ""}
-                    </span>
-                  </label>
-                );
-              })}
-              {!filtered_folders.length ? <div style={{ fontSize: 12, opacity: 0.8, padding: 6 }}>No folders match your filter.</div> : null}
-            </div>
-          </div>
-        ) : (
-          <div>
-            <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
-              Select a folder, then choose individual emails.
-            </div>
-
-            <label style={{ display: "block", fontSize: 12, opacity: 0.85 }}>Folder</label>
-            <select
-              style={{ width: "100%", marginBottom: 8 }}
-              value={email_folder_id}
-              onChange={(e) => load_email_folder(e.target.value)}
-              disabled={!token_ok}
-            >
-              <option value="">Select…</option>
-              {folders.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.displayName} {typeof f.totalItemCount === "number" ? `(${f.totalItemCount})` : ""}
-                </option>
-              ))}
-            </select>
-
-            <label style={{ display: "block", fontSize: 12, opacity: 0.85 }}>Email filter</label>
-            <input
-              value={messages_filter}
-              onChange={(e) => setMessagesFilter(e.target.value)}
-              placeholder="Filter by subject or sender..."
-              style={{ width: "100%", marginBottom: 8 }}
-            />
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-              <button disabled={!filtered_messages.length} onClick={select_all_filtered_emails}>Select all (filtered)</button>
-              <button disabled={!selected_email_ids.size} onClick={clear_email_selection}>Clear selection</button>
-              <button disabled={!messages_next_link} onClick={load_more_messages}>Load more</button>
-            </div>
-
-            <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid #ddd", padding: 6 }}>
-              {filtered_messages.length ? (
-                filtered_messages.map((m) => {
-                  const from = m.from?.emailAddress?.address || "";
-                  const checked = selected_email_ids.has(m.id);
-                  return (
-                    <label key={m.id} style={{ display: "block", padding: "6px 4px", borderBottom: "1px solid #eee" }}>
-                      <input type="checkbox" checked={checked} onChange={() => toggle_email(m.id)} />{" "}
-                      <strong>{m.subject || "(no subject)"}</strong>
-                      <div style={{ fontSize: 12, opacity: 0.85 }}>
-                        {from} — {m.receivedDateTime || ""}
-                      </div>
-                      <div style={{ fontSize: 12 }}>{truncate(m.bodyPreview || "", 160)}</div>
-                    </label>
-                  );
-                })
-              ) : (
-                <div style={{ fontSize: 12, opacity: 0.8, padding: 6 }}>
-                  {email_folder_id ? "No messages loaded yet (or none match filter)." : "Select a folder to view emails."}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div style={{ border: "1px solid #eee", padding: 10, marginTop: 10 }}>
-          <div style={{ fontSize: 12 }}><strong>Selection summary</strong></div>
-          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
-            Folders selected: {selected_folder_ids.size} — Emails selected: {selected_email_ids.size}
-          </div>
-          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>
-            Total to index (approx): {selection_summary.effectiveTotal}
-          </div>
-          {selection_summary.large ? (
-            <div style={{ fontSize: 12, color: "#900", marginTop: 6 }}>
-              Large selections take longer to process and may impact responsiveness.
-            </div>
-          ) : null}
-        </div>
-
-        <div style={{ marginTop: 10 }}>
-          <button disabled={!can_continue_from_select()} onClick={go_preview}>Continue</button>
-        </div>
-
-        <hr />
-
-        <h3>Clear local index</h3>
-        <div style={{ fontSize: 12, opacity: 0.8 }}>
-          Clear the full index or clear a specific ingestion run.
-        </div>
-        <button style={{ marginTop: 8 }} disabled={!token_ok} onClick={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}>
-          Clear…
-        </button>
-
-        {render_clear_modal()}
-      </div>
-    );
-  }
-
-  function render_index_preview() {
-    return (
-      <div>
-        <h3 style={{ marginTop: 0 }}>Consent and confirmation</h3>
-
-        <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa" }}>
-          <div style={{ fontSize: 12 }}><strong>Summary</strong></div>
-          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
-            Mode: {ingest_mode === "FOLDERS" ? "Folders" : "Emails"}
-          </div>
-          <div style={{ fontSize: 12, opacity: 0.85 }}>
-            Total to index (approx): {selection_summary.effectiveTotal}
-          </div>
-          {ingest_mode === "FOLDERS" ? (
-            <div style={{ fontSize: 12, opacity: 0.85 }}>Per-folder limit: {folder_limit}</div>
-          ) : null}
-        </div>
-
-        {selection_summary.large ? (
-          <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5", marginTop: 10 }}>
-            <strong>Large selection warning</strong>
-            <div style={{ fontSize: 12, marginTop: 6 }}>
-              Large selections take longer to process and may impact responsiveness.
-            </div>
-            <label style={{ display: "block", fontSize: 12, marginTop: 8 }}>
-              <input type="checkbox" checked={large_ack_checked} onChange={(e) => setLargeAckChecked(e.target.checked)} />{" "}
-              I understand this may take several minutes.
-            </label>
-          </div>
-        ) : null}
-
-        <div style={{ border: "1px solid #ddd", padding: 10, marginTop: 10 }}>
-          <strong>Consent required</strong>
-          <p style={{ marginTop: 8, fontSize: 12 }}>{privacy_text}</p>
-
-          <label style={{ display: "block", marginBottom: 8, fontSize: 12 }}>
-            <input type="checkbox" checked={consent_checked} onChange={(e) => setConsentChecked(e.target.checked)} />{" "}
-            I consent to local storage and indexing.
-          </label>
-        </div>
-
-        <div style={{ marginTop: 10 }}>
-          <button onClick={back_to_select}>Back</button>{" "}
-          <button disabled={!consent_checked || (selection_summary.large && !large_ack_checked)} onClick={run_ingestion}>
-            Start indexing
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  function render_index_running() {
-    return (
-      <div>
-        {render_phase_bar()}
-        {render_cancel_confirm_modal()}
-        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85 }}>
-          Keep Outlook open while indexing runs.
-        </div>
-      </div>
-    );
-  }
-
-  function render_index_cancelled() {
-    return (
-      <div>
-        <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5" }}>
-          <strong>Indexing cancelled</strong>
-          <div style={{ fontSize: 12, marginTop: 6 }}>{cancel_summary || "Indexing cancelled. Some items may already be indexed."}</div>
-        </div>
-
-        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}>
-            Clear…
-          </button>
-          <button onClick={() => { setCancelSummary(""); cancel_requested_ref.current = false; setIngestStep("SELECT"); }}>
-            Return to selection
-          </button>
-        </div>
-
-        {render_clear_modal()}
-      </div>
-    );
-  }
-
-  function render_index_complete() {
-    return (
-      <div>
-        <div style={{ border: "1px solid #0a0", padding: 10, background: "#f5fff5" }}>
-          <strong>Indexing complete</strong>
-          <div style={{ fontSize: 12, marginTop: 6 }}>{complete_summary || "Indexing completed successfully."}</div>
-        </div>
-
-        <div style={{ marginTop: 10 }}>
-          <button onClick={() => setScreen("CHAT")}>Go to chat</button>{" "}
-          <button onClick={() => reset_ingest_state()}>Index more emails</button>
-        </div>
-      </div>
-    );
-  }
-
   function render_index_management(is_collapsible_panel: boolean) {
     const body = (
-      <div>
-        {ingest_step === "SELECT" && render_index_select_scope()}
-        {ingest_step === "PREVIEW" && render_index_preview()}
-        {ingest_step === "RUNNING" && render_index_running()}
-        {ingest_step === "CANCELLED" && render_index_cancelled()}
-        {ingest_step === "COMPLETE" && render_index_complete()}
+      <div className="op-fit">
+        {ingest_step === "SELECT" && render_select_step()}
+        {ingest_step === "PREVIEW" && render_preview_step()}
+        {ingest_step === "RUNNING" && render_running_step()}
+        {ingest_step === "CANCELLED" && render_cancelled_step()}
+        {ingest_step === "COMPLETE" && render_complete_step()}
       </div>
     );
 
     if (!is_collapsible_panel) return body;
 
     return (
-      <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 10, background: "#fafafa" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <strong>Index management</strong>
-          <button onClick={() => setIndexPanelOpen((v) => !v)}>{index_panel_open ? "Hide" : "Show"}</button>
+      <div className="op-card">
+        <div className="op-cardHeader">
+          <div>
+            <div className="op-cardTitle">Index management</div>
+            <div className="op-muted">Index more emails or clear local data.</div>
+          </div>
+          <button className="op-btn" onClick={() => setIndexPanelOpen((v) => !v)}>
+            {index_panel_open ? "Hide" : "Show"}
+          </button>
         </div>
 
-        {index_panel_open ? (
-          <div style={{ marginTop: 10 }}>{body}</div>
-        ) : (
-          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>
-            Indexed: {index_status?.indexed_count ?? 0} — Last updated: {fmt_dt(index_status?.last_updated)}
+        <div className="op-cardBody" style={{ display: index_panel_open ? "block" : "none" }}>
+          {body}
+        </div>
+
+        {!index_panel_open ? (
+          <div className="op-cardBody">
+            <div className="op-muted">
+              Indexed <strong>{index_status?.indexed_count ?? 0}</strong> • Updated <strong>{fmt_dt(index_status?.last_updated)}</strong>
+            </div>
           </div>
-        )}
+        ) : null}
       </div>
     );
   }
 
-  // ---------------- Phase 4: Chat UI ----------------
+  // ---------- Chat transcript ----------
+  function format_time(ms: number) {
+    const d = new Date(ms);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  function toggle_sources(msgId: string) {
+    setChatMsgs((prev) => {
+      const next = prev.map((m) => (m.id === msgId ? { ...m, sources_open: !m.sources_open } : m));
+      save_chat_to_storage(next);
+      return next;
+    });
+  }
+
   function render_chat_transcript() {
     if (!chat_msgs.length) {
       return (
-        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>
-          {chat_expired_note ? "Previous chat expired after 1 hour." : "No messages in this session yet."}
+        <div className="op-muted" style={{ marginTop: 10 }}>
+          {chat_expired_note ? "Previous chat expired after 1 hour." : "Ask a question about your indexed emails to begin."}
+          <div className="op-helpNote">
+            Example: “Summarise the latest emails from my manager” or “Find invoices from last month.”
+          </div>
         </div>
       );
     }
 
     return (
-      <div style={{ marginTop: 10 }}>
+      <div className="op-chatTranscript" ref={transcript_ref}>
         {chat_state === "RESTORED" ? (
-          <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
-            Restored chat from the last hour.
+          <div className="op-banner" style={{ marginBottom: 10 }}>
+            <div className="op-bannerTitle">Chat restored</div>
+            <div className="op-bannerText">Restored messages from the last hour.</div>
           </div>
         ) : null}
 
-        {chat_msgs.map((m) => (
-          <div key={m.id} style={{ marginBottom: 10 }}>
-            <div
-              style={{
-                border: "1px solid #ddd",
-                background: m.role === "user" ? "#f7f7ff" : "#fff",
-                padding: 10,
-                borderRadius: 6
-              }}
-            >
-              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>
-                <strong>{m.role === "user" ? "You" : "Assistant"}</strong>
+        {chat_msgs.map((m) => {
+          const isUser = m.role === "user";
+          const srcs = (m.sources || []).slice(0, 3); // enforce top 3 at render time too
+          return (
+            <div key={m.id} className={`op-bubble ${isUser ? "op-bubbleUser" : ""}`}>
+              <div className="op-bubbleHeader">
+                <div className="op-bubbleRole">{isUser ? "You" : "Assistant"}</div>
+                <div className="op-bubbleTime">{format_time(m.created_at_ms)}</div>
               </div>
-              <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{m.text}</div>
-            </div>
 
-            {m.role === "assistant" && m.sources && m.sources.length ? (
-              <div style={{ marginTop: 8 }}>
-                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                  <strong>Sources</strong>
-                </div>
-                {m.sources.map((s, idx) => (
-                  <div key={`${m.id}_${s.message_id}_${idx}`} style={{ border: "1px solid #eee", padding: 8, marginBottom: 8 }}>
-                    <div>
-                      <strong>{s.subject || "(no subject)"}</strong>
-                    </div>
-                    <div style={{ fontSize: 12, opacity: 0.8 }}>
-                      {s.sender} — {s.received_dt} {typeof s.score === "number" ? `— score: ${s.score.toFixed(4)}` : ""}
-                    </div>
-                    <details style={{ marginTop: 6 }}>
-                      <summary style={{ cursor: "pointer", fontSize: 12 }}>Show excerpt</summary>
-                      <div style={{ fontSize: 12, marginTop: 6 }}>{s.snippet}</div>
-                    </details>
-                    <button style={{ marginTop: 6 }} onClick={() => open_email(s.message_id, s.weblink)}>
-                      Open email
-                    </button>
+              <div className="op-bubbleText">{m.text}</div>
+
+              {!isUser && srcs.length ? (
+                <>
+                  <div
+                    className="op-sourcesToggle"
+                    onClick={() => toggle_sources(m.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggle_sources(m.id); }}
+                  >
+                    Sources ({srcs.length}) {m.sources_open ? "▲" : "▼"}
                   </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ))}
+
+                  {m.sources_open ? (
+                    <div>
+                      {srcs.map((s) => (
+                        <div key={`${m.id}_${s.message_id}`} className="op-sourceRow">
+                          <div className="op-sourceTop">
+                            <div style={{ minWidth: 0 }}>
+                              <div className="op-itemTitle">{truncate(s.subject || "(no subject)", 52)}</div>
+                              <div className="op-itemMeta">{truncate(s.sender, 30)} • {truncate(s.received_dt, 26)}</div>
+                            </div>
+                            <button className="op-sourceLink" onClick={() => open_email(s.message_id, s.weblink)}>
+                              Open
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -1479,43 +1683,30 @@ export default function TaskPaneView() {
 
     if (no_index) {
       return (
-        <div>
-          <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5" }}>
-            <strong>No emails indexed</strong>
-            <div style={{ fontSize: 12, marginTop: 6 }}>Index emails first using Index management.</div>
+        <div className="op-fit">
+          <div className="op-banner op-bannerStrong">
+            <div className="op-bannerTitle">Index required</div>
+            <div className="op-bannerText">Index emails first using Index management.</div>
           </div>
-          <div style={{ marginTop: 10 }}>{render_index_management(false)}</div>
+          <div className="op-spacer" />
+          {render_index_management(false)}
         </div>
       );
     }
 
     return (
-      <div>
+      <div className="op-chatShell">
         {render_index_management(true)}
 
-        <hr />
-
-        <h3>Chat</h3>
-        <div style={{ fontSize: 12, opacity: 0.8 }}>
-          Ask questions about your indexed emails.
-        </div>
-
-        {render_chat_transcript()}
-
-        <div style={{ marginTop: 12 }}>
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={3}
-            style={{ width: "100%" }}
-            placeholder="Type your message..."
-            disabled={sending}
-          />
-          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={() => send_chat()} disabled={!token_ok || sending || !draft.trim()}>
-              Send
-            </button>
+        <div className="op-spacer" />
+        <div className="op-card op-fit" style={{ flex: 1, minHeight: 0 }}>
+          <div className="op-cardHeader">
+            <div>
+              <div className="op-cardTitle">Chat</div>
+              <div className="op-muted">Answers are based only on locally indexed emails.</div>
+            </div>
             <button
+              className="op-btn"
               onClick={() => {
                 clear_chat_storage();
                 setChatMsgs([]);
@@ -1523,10 +1714,33 @@ export default function TaskPaneView() {
                 setChatExpiredNote(false);
               }}
               disabled={sending}
-              title="Clears local chat history for this session"
+              title="Clear local chat history"
             >
               Clear chat
             </button>
+          </div>
+
+          <div className="op-cardBody op-fitBody" style={{ padding: 12 }}>
+            {render_chat_transcript()}
+          </div>
+
+          <div className="op-chatComposer">
+            <textarea
+              className="op-textarea"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={2}
+              placeholder="Ask a question…"
+              disabled={sending}
+            />
+            <div className="op-row" style={{ justifyContent: "space-between", marginTop: 8 }}>
+              <div className="op-muted">
+                {sending ? "Working…" : "Tip: Keep questions specific for better results."}
+              </div>
+              <button className="op-btn op-btnPrimary" onClick={send_chat} disabled={!draft.trim() || sending}>
+                Send
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1535,12 +1749,13 @@ export default function TaskPaneView() {
 
   // ---------- main render ----------
   return (
-    <div style={{ fontFamily: "Segoe UI, Arial", padding: 12, lineHeight: 1.35 }}>
+    <div className="op-app">
       {render_header()}
-
-      {screen === "SIGNIN" && render_signin()}
-      {screen === "INDEX" && render_index_management(false)}
-      {screen === "CHAT" && render_chat()}
+      <div className="op-body">
+        {screen === "SIGNIN" && render_signin()}
+        {screen === "INDEX" && render_index_management(false)}
+        {screen === "CHAT" && render_chat()}
+      </div>
     </div>
   );
 }

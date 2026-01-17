@@ -60,3 +60,13 @@
 {"event": "ingest", "sqlite_upsert_ms": 4.843500006245449, "embedding_ms": 21.904599998379126, "chroma_upsert_ms": 56.0399999958463, "ingested_count": 1, "ingestion_id": "c3756645-1f39-4fa5-bc7a-f9affe339710", "timestamp": "2026-01-17T15:24:52"}
 {"event": "search", "embedding_query_ms": 10.378800012404099, "vector_search_ms": 43.7071000051219, "query": "how much overtime will i be paid", "timestamp": "2026-01-17T15:25:02"}
 {"event": "llm", "llm_inference_ms": 7202.056500012986, "avg_cpu_percent": 84.9, "peak_cpu_percent": 100.0, "peak_mem_mb": 400.2, "model": "qwen2.5:3b", "timestamp": "2026-01-17T15:25:10"}
+{"event": "search", "embedding_query_ms": 2558.0411999835633, "vector_search_ms": 107.41369999595918, "query": "how much overtime will i be paid?", "timestamp": "2026-01-17T15:48:42"}
+{"event": "llm", "llm_inference_ms": 10030.459000001429, "avg_cpu_percent": 49.6, "peak_cpu_percent": 78.4, "peak_mem_mb": 471.1, "model": "qwen2.5:3b", "timestamp": "2026-01-17T15:48:52"}
+{"event": "search", "embedding_query_ms": 10.711600014474243, "vector_search_ms": 1.7361000063829124, "query": "okay great and what is that per hour roughly", "timestamp": "2026-01-17T15:49:21"}
+{"event": "llm", "llm_inference_ms": 5374.304299999494, "avg_cpu_percent": 62.9, "peak_cpu_percent": 87.8, "peak_mem_mb": 473.0, "model": "qwen2.5:3b", "timestamp": "2026-01-17T15:49:27"}
+{"event": "search", "embedding_query_ms": 10.40379999903962, "vector_search_ms": 1.8620999762788415, "query": "okay and if i were to do double that, what would i make next month", "timestamp": "2026-01-17T15:49:52"}
+{"event": "llm", "llm_inference_ms": 6998.934399976861, "avg_cpu_percent": 59.9, "peak_cpu_percent": 78.2, "peak_mem_mb": 476.1, "model": "qwen2.5:3b", "timestamp": "2026-01-17T15:49:59"}
+{"event": "ingest", "sqlite_upsert_ms": 7.65250000404194, "embedding_ms": 64.52149999677204, "chroma_upsert_ms": 63.94900000304915, "ingested_count": 5, "ingestion_id": "ing_4d7fa7b8-58ff-4ba1-8526-d6fd41e8eed2", "timestamp": "2026-01-17T15:56:55"}
+{"event": "ingest", "sqlite_upsert_ms": 5.635300010908395, "embedding_ms": 15.716599998995662, "chroma_upsert_ms": 16.68560001417063, "ingested_count": 1, "ingestion_id": "ing_4d7fa7b8-58ff-4ba1-8526-d6fd41e8eed2", "timestamp": "2026-01-17T15:56:55"}
+{"event": "search", "embedding_query_ms": 8.217999973567203, "vector_search_ms": 29.789799998980016, "query": "how much overtime be paid?", "timestamp": "2026-01-17T15:59:01"}
+{"event": "llm", "llm_inference_ms": 25391.734100005124, "avg_cpu_percent": 52.6, "peak_cpu_percent": 77.2, "peak_mem_mb": 499.6, "model": "qwen2.5:3b", "timestamp": "2026-01-17T15:59:27"}
