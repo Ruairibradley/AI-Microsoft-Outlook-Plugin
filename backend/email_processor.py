@@ -4,11 +4,16 @@ import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 
 from .chroma_service import get_client
-from .database import get_conn, init_db
+from .database import get_conn, init_db, set_meta, get_meta
 from .embedding_service import embed_texts
 from .timing_utils import timer
 
 COLLECTION_NAME = "emails"
+
+
+def _now_iso() -> str:
+    # ISO-like timestamp (no timezone) consistent with your existing logging style
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _normalize_message(m: Dict[str, Any]) -> Dict[str, Any]:
@@ -23,7 +28,6 @@ def _normalize_message(m: Dict[str, Any]) -> Dict[str, Any]:
     weblink = m.get("webLink") or ""
     body_preview = m.get("bodyPreview") or ""
 
-    # What we store & embed (MVP; can expand to full body later)
     content = f"Subject: {subject}\nFrom: {sender}\nReceived: {received_dt}\n\n{body_preview}".strip()
 
     return {
@@ -33,6 +37,28 @@ def _normalize_message(m: Dict[str, Any]) -> Dict[str, Any]:
         "received_dt": received_dt,
         "weblink": weblink,
         "content": content,
+    }
+
+
+def get_index_status() -> Dict[str, Any]:
+    """
+    Returns minimal index status needed by the UI:
+      - indexed_count
+      - last_updated (null if never ingested)
+    """
+    conn = get_conn()
+    init_db(conn)
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) AS c FROM emails")
+    indexed_count = int(cur.fetchone()["c"])
+
+    last_updated = get_meta(conn, "last_updated")
+
+    return {
+        "indexed_count": indexed_count,
+        "last_updated": last_updated,  # may be None
+        "timestamp": _now_iso(),
     }
 
 
@@ -48,7 +74,7 @@ def ingest_messages(
 
     normalized = [_normalize_message(m) for m in messages if m.get("id")]
     if not normalized:
-        return {"ingested_count": 0, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        return {"ingested_count": 0, "timestamp": _now_iso()}
 
     with timer(timings, "sqlite_upsert_ms"):
         for m in normalized:
@@ -87,8 +113,11 @@ def ingest_messages(
             collection = client.get_or_create_collection(name=COLLECTION_NAME)
             collection.add(ids=ids, embeddings=vectors)
 
+    # Update index metadata
+    set_meta(conn, "last_updated", _now_iso())
+
     timings["ingested_count"] = len(normalized)
-    timings["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    timings["timestamp"] = _now_iso()
 
     if log_timings:
         with open("latency_log.jsonl", "a", encoding="utf-8") as f:
@@ -116,6 +145,7 @@ def search_emails(
     dists = (results.get("distances") or [[]])[0]
 
     conn = get_conn()
+    init_db(conn)
     cur = conn.cursor()
 
     out: List[Dict[str, Any]] = []
@@ -141,7 +171,7 @@ def search_emails(
         })
 
     timings["query"] = query
-    timings["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    timings["timestamp"] = _now_iso()
 
     if log_timings:
         with open("latency_log.jsonl", "a", encoding="utf-8") as f:
@@ -152,6 +182,7 @@ def search_emails(
 
 def clear_index() -> Dict[str, Any]:
     conn = get_conn()
+    init_db(conn)
     cur = conn.cursor()
     cur.execute("DELETE FROM emails")
     conn.commit()
@@ -162,4 +193,7 @@ def clear_index() -> Dict[str, Any]:
     except Exception:
         pass
 
-    return {"cleared": True, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    # Update metadata
+    set_meta(conn, "last_updated", _now_iso())
+
+    return {"cleared": True, "timestamp": _now_iso()}

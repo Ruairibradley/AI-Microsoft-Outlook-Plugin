@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .graph_client import list_folders, list_messages, get_messages_by_ids
-from .email_processor import ingest_messages, search_emails, clear_index
+from .email_processor import ingest_messages, search_emails, clear_index, get_index_status
 from .ollama_client import generate
 
 app = FastAPI(title="Outlook Local-Privacy Assistant Backend")
@@ -46,6 +46,11 @@ class ClearRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/index/status")
+def index_status():
+    return get_index_status()
 
 
 @app.get("/graph/folders")

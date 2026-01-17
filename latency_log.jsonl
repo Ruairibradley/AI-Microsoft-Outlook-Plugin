@@ -35,3 +35,7 @@
 {"event": "ingest", "sqlite_upsert_ms": 88.65650001098402, "sqlite_fetch_ms": 0.37369999336078763, "embedding_ms": 2540.276999992784, "chroma_write_ms": 66.96050000027753, "ingested_count": 1, "timestamp": "2026-01-16T15:26:41"}
 {"event": "search", "embedding_query_ms": 8.501499993144535, "vector_search_ms": 32.46020000369754, "query": "how much overtime will i get?", "timestamp": "2026-01-16T15:27:04"}
 {"event": "llm", "llm_inference_ms": 12050.684600006207, "avg_cpu_percent": 64.3, "peak_cpu_percent": 98.1, "peak_mem_mb": 478.9, "model": "qwen2.5:3b", "timestamp": "2026-01-16T15:27:16"}
+{"event": "ingest", "sqlite_upsert_ms": 6.292899983236566, "sqlite_fetch_ms": 0.28840001323260367, "embedding_ms": 2943.513100006385, "chroma_write_ms": 93.91029999824241, "ingested_count": 2, "timestamp": "2026-01-17T13:34:09"}
+{"event": "ingest", "sqlite_upsert_ms": 5.254200019408017, "sqlite_fetch_ms": 0.33179999445565045, "embedding_ms": 23.719499993603677, "chroma_write_ms": 16.792100010206923, "ingested_count": 2, "timestamp": "2026-01-17T13:34:26"}
+{"event": "search", "embedding_query_ms": 10.630800010403618, "vector_search_ms": 41.86590001336299, "query": "what does my outlook email offer me", "timestamp": "2026-01-17T13:34:51"}
+{"event": "llm", "llm_inference_ms": 23253.365900018252, "avg_cpu_percent": 72.1, "peak_cpu_percent": 100.0, "peak_mem_mb": 483.6, "model": "qwen2.5:3b", "timestamp": "2026-01-17T13:35:14"}
