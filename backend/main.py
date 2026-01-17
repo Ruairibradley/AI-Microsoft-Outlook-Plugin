@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .graph_client import list_folders, list_messages, get_messages_by_ids
+from .graph_client import list_folders, list_messages, get_messages_by_ids, list_messages_page
 from .email_processor import ingest_messages, search_emails, clear_index, get_index_status
 from .ollama_client import generate
 
@@ -63,6 +63,20 @@ def graph_folders(Authorization: Optional[str] = Header(default=None)):
 def graph_messages(folder_id: str, top: int = 25, Authorization: Optional[str] = Header(default=None)):
     token = _require_token(Authorization)
     return list_messages(token, folder_id=folder_id, top=top)
+
+
+@app.get("/graph/messages_page")
+def graph_messages_page(
+    folder_id: Optional[str] = None,
+    top: int = 25,
+    next_link: Optional[str] = None,
+    Authorization: Optional[str] = Header(default=None),
+):
+    token = _require_token(Authorization)
+    try:
+        return list_messages_page(token, folder_id=folder_id, top=top, next_link=next_link)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/ingest")

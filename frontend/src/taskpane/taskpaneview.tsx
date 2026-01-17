@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { sign_in_interactive, try_get_access_token_silent, get_signed_in_user, sign_out } from "../auth/token";
 import {
   ask_question,
@@ -7,10 +7,19 @@ import {
   get_messages,
   ingest_messages,
   get_index_status,
+  get_messages_page,
+  type GraphMessagesPage,
   type IndexStatus
 } from "../api/backend";
 
 type Screen = "SIGNIN" | "CHAT" | "INDEX";
+
+// Phase 3: include CANCELLED as a separate step
+type IngestStep = "SELECT" | "PREVIEW" | "RUNNING" | "CANCELLED" | "COMPLETE";
+
+type IngestMode = "FOLDERS" | "EMAILS";
+
+type Phase = "FETCHING" | "STORING" | "INDEXING" | "DONE";
 
 type folder = {
   id: string;
@@ -47,15 +56,24 @@ function fmt_dt(s: string | null | undefined) {
   return s.replace("T", " ");
 }
 
+function uniq<T>(arr: T[]) {
+  return Array.from(new Set(arr));
+}
+
 export default function TaskPaneView() {
-  // ---------- global UI state ----------
+  // ---------- global UI ----------
   const [screen, setScreen] = useState<Screen>("SIGNIN");
 
   const [status, setStatus] = useState("starting...");
+  const [busy, setBusy] = useState<string>("");
+
   const [error, setError] = useState<string>("");
   const [error_details, setErrorDetails] = useState<string>("");
 
-  const [busy, setBusy] = useState<string>("");
+  function set_error(msg: string, details: string = "") {
+    setError(msg);
+    setErrorDetails(details);
+  }
 
   // ---------- auth ----------
   const [token_ok, setTokenOk] = useState(false);
@@ -66,45 +84,81 @@ export default function TaskPaneView() {
   const [index_status, setIndexStatus] = useState<IndexStatus | null>(null);
   const [index_panel_open, setIndexPanelOpen] = useState<boolean>(false);
 
-  // ---------- ingestion selection (current working UI; Phase 3 will replace with wizard) ----------
+  async function refresh_index_status(nextPreferredScreen: Screen | null = null) {
+    const st = (await get_index_status()) as IndexStatus;
+    setIndexStatus(st);
+
+    if ((st?.indexed_count || 0) <= 0) {
+      setScreen("INDEX");
+      setIndexPanelOpen(true);
+      return;
+    }
+
+    if (nextPreferredScreen) setScreen(nextPreferredScreen);
+    else if (screen === "SIGNIN") setScreen("CHAT");
+  }
+
+  // ---------- graph data ----------
   const [folders, setFolders] = useState<folder[]>([]);
-  const [folder_id, setFolderId] = useState("");
+  const [folder_filter, setFolderFilter] = useState("");
+
+  // Messages view for email selection mode
+  const [email_folder_id, setEmailFolderId] = useState("");
   const [messages, setMessages] = useState<graph_message[]>([]);
-  const [selected_ids, setSelectedIds] = useState<Set<string>>(new Set());
+  const [messages_filter, setMessagesFilter] = useState("");
+  const [messages_next_link, setMessagesNextLink] = useState<string | null>(null);
 
-  const selected_count = selected_ids.size;
+  // ---------- ingestion wizard state ----------
+  const [ingest_step, setIngestStep] = useState<IngestStep>("SELECT");
+  const [ingest_mode, setIngestMode] = useState<IngestMode>("FOLDERS");
 
-  const [show_consent, setShowConsent] = useState(false);
+  // folder selection
+  const [selected_folder_ids, setSelectedFolderIds] = useState<Set<string>>(new Set());
+  const [folder_limit, setFolderLimit] = useState<number>(100); // per folder (latest N)
+
+  // email selection
+  const [selected_email_ids, setSelectedEmailIds] = useState<Set<string>>(new Set());
+
+  // consent + warnings
   const [consent_checked, setConsentChecked] = useState(false);
+  const [large_ack_checked, setLargeAckChecked] = useState(false);
 
-  // ---------- chat (current working query/answer; Phase 4 will add chat history) ----------
+  // run state
+  const [run_phase, setRunPhase] = useState<Phase>("FETCHING");
+  const [run_total, setRunTotal] = useState<number | null>(null);
+  const [run_done, setRunDone] = useState<number>(0);
+
+  const [cancel_confirm_open, setCancelConfirmOpen] = useState(false);
+  const [cancel_summary, setCancelSummary] = useState<string>("");
+
+  const [complete_summary, setCompleteSummary] = useState<string>("");
+
+  // used to cancel ONLY the folder paging (FETCHING loop)
+  const abort_ref = useRef<AbortController | null>(null);
+
+  // cancellation requested flag (covers both fetch loop and the later ingest call)
+  const cancel_requested_ref = useRef<boolean>(false);
+
+  // ---------- chat (still simple; Phase 4 adds history TTL) ----------
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<source[]>([]);
 
-  // ---------- helpers ----------
-  function set_error(msg: string, details: string = "") {
-    setError(msg);
-    setErrorDetails(details);
-  }
+  // ---------- clear index confirmation modal ----------
+  const [clear_modal_open, setClearModalOpen] = useState(false);
+  const [clear_confirm_checked, setClearConfirmChecked] = useState(false);
 
-  async function refresh_index_status() {
-    const st = (await get_index_status()) as IndexStatus;
-    setIndexStatus(st);
+  // ---------- consent text ----------
+  const privacy_text = useMemo(() => {
+    return [
+      "You are about to store selected email content locally on this device.",
+      "This tool stores selected email text locally for search and question answering.",
+      "No email content is uploaded to a remote server by this tool.",
+      "You can clear the local index at any time."
+    ].join(" ");
+  }, []);
 
-    // If the index is empty, force Index Management screen.
-    if ((st?.indexed_count || 0) <= 0) {
-      setScreen("INDEX");
-      setIndexPanelOpen(true);
-    } else {
-      // If we are signed in and index exists, default to Chat.
-      // Do not forcibly override if the user is already on INDEX intentionally.
-      if (screen === "SIGNIN" || screen === "CHAT") {
-        setScreen("CHAT");
-      }
-    }
-  }
-
+  // ---------- startup ----------
   async function load_folders_with_token(token: string) {
     setBusy("loading folders...");
     const data = await get_folders(token);
@@ -112,14 +166,12 @@ export default function TaskPaneView() {
     setBusy("");
   }
 
-  // ---------- startup ----------
   async function initialize() {
     set_error("");
     setStatus("checking session...");
     setBusy("");
 
     try {
-      // 1) silent auth attempt
       const token = await try_get_access_token_silent();
       if (!token) {
         setTokenOk(false);
@@ -137,11 +189,9 @@ export default function TaskPaneView() {
       const who = await get_signed_in_user();
       setUserLabel(who?.username || who?.name || "");
 
-      // 2) load index status
       setStatus("loading local index status...");
       await refresh_index_status();
 
-      // 3) load folders (needed for ingestion screen/panel)
       setStatus("loading folders...");
       await load_folders_with_token(token);
 
@@ -199,16 +249,13 @@ export default function TaskPaneView() {
     setBusy("signing out...");
     try {
       await sign_out();
+
       setTokenOk(false);
       setAccessToken("");
       setUserLabel("");
       setIndexStatus(null);
       setFolders([]);
-      setFolderId("");
-      setMessages([]);
-      setSelectedIds(new Set());
-      setShowConsent(false);
-      setConsentChecked(false);
+      reset_ingest_state();
       setQuestion("");
       setAnswer("");
       setSources([]);
@@ -222,21 +269,119 @@ export default function TaskPaneView() {
     }
   }
 
-  // ---------- ingestion selection ----------
-  async function load_messages(fid: string) {
-    setFolderId(fid);
+  // ---------- ingestion helpers ----------
+  function reset_ingest_state() {
+    setIngestStep("SELECT");
+    setIngestMode("FOLDERS");
+    setSelectedFolderIds(new Set());
+    setFolderLimit(100);
+
+    setEmailFolderId("");
     setMessages([]);
-    setSelectedIds(new Set());
-    setShowConsent(false);
+    setMessagesFilter("");
+    setMessagesNextLink(null);
+    setSelectedEmailIds(new Set());
+
     setConsentChecked(false);
+    setLargeAckChecked(false);
+
+    setRunPhase("FETCHING");
+    setRunTotal(null);
+    setRunDone(0);
+
+    setCancelConfirmOpen(false);
+    setCancelSummary("");
+    setCompleteSummary("");
+
+    abort_ref.current = null;
+    cancel_requested_ref.current = false;
+  }
+
+  const index_empty = (index_status?.indexed_count || 0) <= 0;
+
+  const filtered_folders = useMemo(() => {
+    const q = folder_filter.trim().toLowerCase();
+    if (!q) return folders;
+    return folders.filter((f) => (f.displayName || "").toLowerCase().includes(q));
+  }, [folders, folder_filter]);
+
+  const filtered_messages = useMemo(() => {
+    const q = messages_filter.trim().toLowerCase();
+    if (!q) return messages;
+    return messages.filter((m) => {
+      const subj = (m.subject || "").toLowerCase();
+      const from = (m.from?.emailAddress?.address || "").toLowerCase();
+      return subj.includes(q) || from.includes(q);
+    });
+  }, [messages, messages_filter]);
+
+  function toggle_folder(id: string) {
+    setSelectedFolderIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggle_email(id: string) {
+    setSelectedEmailIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function select_all_filtered_emails() {
+    setSelectedEmailIds((prev) => {
+      const next = new Set(prev);
+      for (const m of filtered_messages) next.add(m.id);
+      return next;
+    });
+  }
+
+  function clear_email_selection() {
+    setSelectedEmailIds(new Set());
+  }
+
+  const selection_summary = useMemo(() => {
+    const folderCount = selected_folder_ids.size;
+    const emailCount = selected_email_ids.size;
+
+    const approxFolderTotal = (() => {
+      if (!folderCount) return 0;
+      const selected = folders.filter((f) => selected_folder_ids.has(f.id));
+      return selected.reduce((sum, f) => sum + Math.min(folder_limit, f.totalItemCount || folder_limit), 0);
+    })();
+
+    const effectiveTotal = ingest_mode === "FOLDERS" ? approxFolderTotal : emailCount;
+
+    return {
+      folderCount,
+      emailCount,
+      approxFolderTotal,
+      effectiveTotal,
+      large: effectiveTotal >= 200
+    };
+  }, [selected_folder_ids, selected_email_ids, folders, ingest_mode, folder_limit]);
+
+  // ---------- messages loading for EMAIL mode ----------
+  async function load_email_folder(fid: string) {
+    setEmailFolderId(fid);
+    setMessages([]);
+    setMessagesNextLink(null);
+    setSelectedEmailIds(new Set());
+    setMessagesFilter("");
 
     if (!fid) return;
     if (!token_ok || !access_token) return;
 
     setBusy("loading messages...");
+    set_error("");
+
     try {
       const data = await get_messages(access_token, fid, 25);
       setMessages((data.value || []) as graph_message[]);
+      setMessagesNextLink((data as any)["@odata.nextLink"] || null);
     } catch (e: any) {
       set_error("Failed to load messages. Please try again.", String(e?.message || e));
     } finally {
@@ -244,87 +389,203 @@ export default function TaskPaneView() {
     }
   }
 
-  function toggle_select(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  }
+  async function load_more_messages() {
+    if (!token_ok || !access_token) return;
+    if (!messages_next_link) return;
 
-  const privacy_text = useMemo(() => {
-    return [
-      "You are about to store selected email content locally on this device.",
-      "This MVP stores the selected email text locally for search and question answering.",
-      "No email content is uploaded to a remote server by this tool.",
-      "You can clear the local index at any time."
-    ].join(" ");
-  }, []);
-
-  async function run_ingest_confirmed() {
-    if (!token_ok || !access_token) {
-      alert("Please sign in first.");
-      return;
-    }
-    if (!folder_id) {
-      alert("Select a folder first.");
-      return;
-    }
-    if (!selected_ids.size) {
-      alert("Select at least one email.");
-      return;
-    }
-
-    setBusy("ingesting (storing + indexing locally)...");
+    setBusy("loading more messages...");
     set_error("");
 
     try {
-      await ingest_messages(access_token, folder_id, Array.from(selected_ids));
-
-      // Refresh local status and route user to chat if index now exists.
-      await refresh_index_status();
-
-      setAnswer("Ingestion complete. You can now ask questions.");
-      setSources([]);
-      setShowConsent(false);
-      setConsentChecked(false);
-
-      // If index exists now, show chat by default.
-      if ((index_status?.indexed_count || 0) > 0) {
-        setScreen("CHAT");
-      } else {
-        // Fallback: show chat anyway; refresh_index_status should normally handle.
-        setScreen("CHAT");
-      }
+      const data = await get_messages_page(access_token, { next_link: messages_next_link, top: 25 });
+      const page = (data.value || []) as graph_message[];
+      setMessages((prev) => [...prev, ...page]);
+      setMessagesNextLink((data as any)["@odata.nextLink"] || null);
     } catch (e: any) {
-      set_error("Ingestion failed. If the local index is corrupted, clear it and try again.", String(e?.message || e));
+      set_error("Failed to load more messages. Please try again.", String(e?.message || e));
     } finally {
       setBusy("");
     }
   }
 
-  async function run_clear_index() {
+  // ---------- wizard transitions ----------
+  function can_continue_from_select(): boolean {
+    if (ingest_mode === "FOLDERS") return selected_folder_ids.size > 0;
+    return selected_email_ids.size > 0;
+  }
+
+  function go_preview() {
+    set_error("");
+    setConsentChecked(false);
+    setLargeAckChecked(false);
+    setCancelSummary("");
+    setIngestStep("PREVIEW");
+  }
+
+  function back_to_select() {
+    set_error("");
+    setCancelSummary("");
+    setIngestStep("SELECT");
+  }
+
+  // ---------- cancel flow (separate CANCELLED step) ----------
+  function cancel_clicked() {
+    setCancelConfirmOpen(true);
+  }
+
+  function cancel_continue() {
+    setCancelConfirmOpen(false);
+  }
+
+  function cancel_confirm_now() {
+    setCancelConfirmOpen(false);
+
+    cancel_requested_ref.current = true;
+
+    // Abort only the FETCHING paging loop (if in progress)
+    if (abort_ref.current) abort_ref.current.abort();
+
+    // Move to CANCELLED step immediately (per spec)
+    setCancelSummary("Indexing cancelled. Some items may already be indexed.");
+    setIngestStep("CANCELLED");
+  }
+
+  // ---------- ingestion run ----------
+  async function run_ingestion() {
     if (!token_ok || !access_token) {
       alert("Please sign in first.");
       return;
     }
 
-    setBusy("clearing local index...");
+    if (!consent_checked) return;
+    if (selection_summary.large && !large_ack_checked) return;
+
     set_error("");
+    setCancelSummary("");
+    cancel_requested_ref.current = false;
+
+    setIngestStep("RUNNING");
+    setRunDone(0);
+    setRunTotal(selection_summary.effectiveTotal || null);
+    setRunPhase("FETCHING");
+
+    // Abort controller affects only the FETCHING loop.
+    const ac = new AbortController();
+    abort_ref.current = ac;
+
+    try {
+      // 1) Build list of message IDs (FETCHING)
+      let message_ids: string[] = [];
+      const PAGE_SIZE = 25;
+
+      if (ingest_mode === "EMAILS") {
+        message_ids = Array.from(selected_email_ids);
+        setRunDone(message_ids.length);
+      } else {
+        const selected = folders.filter((f) => selected_folder_ids.has(f.id));
+        const all_ids: string[] = [];
+        let done = 0;
+
+        for (const f of selected) {
+          const limit = Math.max(1, folder_limit);
+          let next_link: string | null = null;
+          let collected = 0;
+
+          while (collected < limit) {
+            if (ac.signal.aborted || cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
+
+            let pageData: GraphMessagesPage;
+
+            if (next_link) {
+              pageData = await get_messages_page(access_token, { next_link, top: PAGE_SIZE });
+            } else {
+              pageData = await get_messages_page(access_token, { folder_id: f.id, top: PAGE_SIZE });
+            }
+
+            const page = (pageData.value || []) as graph_message[];
+            next_link = (pageData as any)["@odata.nextLink"] || null;
+
+            if (!page.length) break;
+
+            for (const m of page) {
+              if (collected >= limit) break;
+              all_ids.push(m.id);
+              collected += 1;
+              done += 1;
+              setRunDone(done);
+            }
+
+            if (!next_link) break;
+          }
+        }
+
+        message_ids = uniq(all_ids);
+      }
+
+      if (!message_ids.length) throw new Error("No messages selected.");
+
+      // If cancelled during fetch/build
+      if (cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
+
+      // 2) STORING (backend ingest call)
+      setRunPhase("STORING");
+
+      const folder_id_to_send = ingest_mode === "EMAILS" ? (email_folder_id || "selected") : "multi";
+
+      await ingest_messages(access_token, folder_id_to_send, message_ids);
+
+      // If user cancelled while ingest call was executing, we still honor cancellation UI state.
+      if (cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
+
+      // 3) INDEXING (backend rebuilds during ingest; keep phase explicit)
+      setRunPhase("INDEXING");
+      setRunPhase("DONE");
+
+      await refresh_index_status();
+
+      const st = (await get_index_status()) as IndexStatus;
+      setIndexStatus(st);
+
+      const summary = ingest_mode === "EMAILS"
+        ? `Indexed ${message_ids.length} selected emails.`
+        : `Indexed ${message_ids.length} emails from selected folder(s).`;
+
+      setCompleteSummary(`${summary} Index updated at ${fmt_dt(st.last_updated)}.`);
+      setIngestStep("COMPLETE");
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+
+      if (msg === "CANCELLED_BY_USER") {
+        await refresh_index_status(); // reflect any partial indexing that may have happened
+        setCancelSummary("Indexing cancelled. Some items may already be indexed.");
+        setIngestStep("CANCELLED");
+        return;
+      }
+
+      setIngestStep("SELECT");
+      set_error(
+        "Indexing failed. If the local index is unavailable, clear local index and try again.",
+        msg
+      );
+    } finally {
+      abort_ref.current = null;
+      setBusy("");
+    }
+  }
+
+  // ---------- clear index flow ----------
+  async function clear_index_confirmed() {
+    if (!token_ok || !access_token) return;
+
+    set_error("");
+    setBusy("clearing local index...");
 
     try {
       await clear_index(access_token);
-      await refresh_index_status();
-
-      setAnswer("Local index cleared.");
-      setSources([]);
-      setMessages([]);
-      setSelectedIds(new Set());
-      setFolderId("");
-
-      // Force Index screen when empty.
-      setScreen("INDEX");
-      setIndexPanelOpen(true);
+      await refresh_index_status("INDEX");
+      reset_ingest_state();
+      setClearModalOpen(false);
+      setClearConfirmChecked(false);
     } catch (e: any) {
       set_error("Failed to clear local index. Please try again.", String(e?.message || e));
     } finally {
@@ -356,7 +617,7 @@ export default function TaskPaneView() {
     }
   }
 
-  // ---------- render blocks ----------
+  // ---------- UI render helpers ----------
   function render_error() {
     if (!error) return null;
     return (
@@ -395,12 +656,8 @@ export default function TaskPaneView() {
             >
               Chat
             </button>
-            <button onClick={() => setScreen("INDEX")}>
-              Index management
-            </button>
-            <button onClick={() => sign_out_clicked()}>
-              Sign out
-            </button>
+            <button onClick={() => setScreen("INDEX")}>Index management</button>
+            <button onClick={() => sign_out_clicked()}>Sign out</button>
           </div>
         ) : null}
 
@@ -423,106 +680,279 @@ export default function TaskPaneView() {
     );
   }
 
-  function render_index_management(is_collapsible_panel: boolean) {
-    const empty = (index_status?.indexed_count || 0) <= 0;
+  // ---------- Index management wizard ----------
+  function render_phase_bar() {
+    const phases: { key: Phase; label: string }[] = [
+      { key: "FETCHING", label: "Fetching emails" },
+      { key: "STORING", label: "Storing locally" },
+      { key: "INDEXING", label: "Indexing for search" },
+      { key: "DONE", label: "Done" },
+    ];
 
-    const body = (
+    const currentIdx = phases.findIndex((p) => p.key === run_phase);
+
+    return (
+      <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa" }}>
+        <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
+          <strong>Progress</strong>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
+          {phases.map((p, idx) => {
+            const active = idx === currentIdx;
+            const done = idx < currentIdx;
+            return (
+              <span
+                key={p.key}
+                style={{
+                  padding: "2px 6px",
+                  border: "1px solid #ddd",
+                  background: active ? "#fff" : done ? "#f0f0f0" : "#fafafa"
+                }}
+              >
+                {done ? "✓ " : active ? "→ " : ""}{p.label}
+              </span>
+            );
+          })}
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <div style={{ height: 8, background: "#eee", borderRadius: 4, overflow: "hidden" }}>
+            <div
+              style={{
+                height: 8,
+                width: run_total
+                  ? `${Math.min(100, Math.round((run_done / Math.max(1, run_total)) * 100))}%`
+                  : (run_phase === "FETCHING" ? "35%" : run_phase === "STORING" ? "60%" : run_phase === "INDEXING" ? "85%" : "100%"),
+                background: "#bbb"
+              }}
+            />
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
+            {run_total ? (
+              <span>Processed {run_done} / {run_total} emails</span>
+            ) : (
+              <span>Processed {run_done} emails</span>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <button onClick={cancel_clicked}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  function render_cancel_confirm_modal() {
+    if (!cancel_confirm_open) return null;
+    return (
+      <div style={{ border: "2px solid #c00", padding: 12, background: "#fff5f5", marginTop: 10 }}>
+        <strong>Cancel indexing now?</strong>
+        <div style={{ fontSize: 12, marginTop: 6 }}>
+          Some emails may already be indexed.
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <button onClick={cancel_continue}>Continue indexing</button>{" "}
+          <button onClick={cancel_confirm_now}>Cancel indexing now</button>
+        </div>
+      </div>
+    );
+  }
+
+  function render_clear_modal() {
+    if (!clear_modal_open) return null;
+    return (
+      <div style={{ border: "2px solid #c00", padding: 12, background: "#fff5f5", marginTop: 10 }}>
+        <strong>Clear local index?</strong>
+        <ul style={{ marginTop: 8, fontSize: 12 }}>
+          <li>Deletes locally stored indexed email text</li>
+          <li>Deletes local search index</li>
+          <li>Cannot be undone</li>
+        </ul>
+
+        <label style={{ display: "block", fontSize: 12, marginTop: 8 }}>
+          <input
+            type="checkbox"
+            checked={clear_confirm_checked}
+            onChange={(e) => setClearConfirmChecked(e.target.checked)}
+          />{" "}
+          I understand this cannot be undone.
+        </label>
+
+        <div style={{ marginTop: 10 }}>
+          <button disabled={!clear_confirm_checked} onClick={clear_index_confirmed}>
+            Clear local index
+          </button>{" "}
+          <button onClick={() => { setClearModalOpen(false); setClearConfirmChecked(false); }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function render_index_select_scope() {
+    return (
       <div>
-        {empty ? (
+        {index_empty ? (
           <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5", marginBottom: 10 }}>
             <strong>No emails indexed yet</strong>
             <div style={{ fontSize: 12, marginTop: 6 }}>
-              Select a folder and choose emails to index locally.
+              Select folders or individual emails to index locally.
+            </div>
+          </div>
+        ) : null}
+
+        {!index_empty ? (
+          <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa", marginBottom: 10 }}>
+            <div style={{ fontSize: 12 }}>
+              <strong>Indexed:</strong> {index_status?.indexed_count ?? 0} emails — <strong>Last updated:</strong> {fmt_dt(index_status?.last_updated)}
+            </div>
+          </div>
+        ) : null}
+
+        <h3 style={{ marginTop: 0 }}>Index management</h3>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+          <button onClick={() => setIngestMode("FOLDERS")} disabled={ingest_mode === "FOLDERS"}>
+            Select folders
+          </button>
+          <button onClick={() => setIngestMode("EMAILS")} disabled={ingest_mode === "EMAILS"}>
+            Select emails
+          </button>
+        </div>
+
+        {ingest_mode === "FOLDERS" ? (
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
+              Choose one or more folders. The system will index the latest N emails per folder.
+            </div>
+
+            <label style={{ display: "block", fontSize: 12, opacity: 0.85 }}>Folder filter</label>
+            <input
+              value={folder_filter}
+              onChange={(e) => setFolderFilter(e.target.value)}
+              placeholder="Type to filter folders..."
+              style={{ width: "100%", marginBottom: 8 }}
+            />
+
+            <label style={{ display: "block", fontSize: 12, opacity: 0.85 }}>Per-folder limit (latest emails)</label>
+            <input
+              type="number"
+              value={folder_limit}
+              min={1}
+              max={2000}
+              onChange={(e) => setFolderLimit(Math.max(1, Math.min(2000, Number(e.target.value || 100))))}
+              style={{ width: "100%", marginBottom: 8 }}
+            />
+
+            <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid #ddd", padding: 6 }}>
+              {filtered_folders.map((f) => {
+                const checked = selected_folder_ids.has(f.id);
+                return (
+                  <label key={f.id} style={{ display: "block", padding: "6px 4px", borderBottom: "1px solid #eee" }}>
+                    <input type="checkbox" checked={checked} onChange={() => toggle_folder(f.id)} />{" "}
+                    <strong>{f.displayName}</strong>{" "}
+                    <span style={{ fontSize: 12, opacity: 0.8 }}>
+                      {typeof f.totalItemCount === "number" ? `(${f.totalItemCount})` : ""}
+                    </span>
+                  </label>
+                );
+              })}
+              {!filtered_folders.length ? (
+                <div style={{ fontSize: 12, opacity: 0.8, padding: 6 }}>No folders match your filter.</div>
+              ) : null}
             </div>
           </div>
         ) : (
-          <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa", marginBottom: 10 }}>
-            <div style={{ fontSize: 12 }}>
-              <strong>Indexed:</strong> {index_status?.indexed_count ?? 0} emails
-              {" "}
-              — <strong>Last updated:</strong> {fmt_dt(index_status?.last_updated)}
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 6 }}>
+              Select a folder, then choose individual emails.
+            </div>
+
+            <label style={{ display: "block", fontSize: 12, opacity: 0.85 }}>Folder</label>
+            <select
+              style={{ width: "100%", marginBottom: 8 }}
+              value={email_folder_id}
+              onChange={(e) => load_email_folder(e.target.value)}
+              disabled={!token_ok}
+            >
+              <option value="">Select…</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.displayName} {typeof f.totalItemCount === "number" ? `(${f.totalItemCount})` : ""}
+                </option>
+              ))}
+            </select>
+
+            <label style={{ display: "block", fontSize: 12, opacity: 0.85 }}>Email filter</label>
+            <input
+              value={messages_filter}
+              onChange={(e) => setMessagesFilter(e.target.value)}
+              placeholder="Filter by subject or sender..."
+              style={{ width: "100%", marginBottom: 8 }}
+            />
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+              <button disabled={!filtered_messages.length} onClick={select_all_filtered_emails}>
+                Select all (filtered)
+              </button>
+              <button disabled={!selected_email_ids.size} onClick={clear_email_selection}>
+                Clear selection
+              </button>
+              <button disabled={!messages_next_link} onClick={load_more_messages}>
+                Load more
+              </button>
+            </div>
+
+            <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid #ddd", padding: 6 }}>
+              {filtered_messages.length ? (
+                filtered_messages.map((m) => {
+                  const from = m.from?.emailAddress?.address || "";
+                  const checked = selected_email_ids.has(m.id);
+                  return (
+                    <label key={m.id} style={{ display: "block", padding: "6px 4px", borderBottom: "1px solid #eee" }}>
+                      <input type="checkbox" checked={checked} onChange={() => toggle_email(m.id)} />{" "}
+                      <strong>{m.subject || "(no subject)"}</strong>
+                      <div style={{ fontSize: 12, opacity: 0.85 }}>
+                        {from} — {m.receivedDateTime || ""}
+                      </div>
+                      <div style={{ fontSize: 12 }}>{truncate(m.bodyPreview || "", 160)}</div>
+                    </label>
+                  );
+                })
+              ) : (
+                <div style={{ fontSize: 12, opacity: 0.8, padding: 6 }}>
+                  {email_folder_id ? "No messages loaded yet (or none match filter)." : "Select a folder to view emails."}
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        <h3 style={{ marginTop: 0 }}>Ingest emails</h3>
-
-        <div style={{ marginBottom: 6 }}>
-          <label style={{ display: "block", fontSize: 12, opacity: 0.85 }}>Select folder</label>
-          <select
-            style={{ width: "100%" }}
-            value={folder_id}
-            onChange={(e) => load_messages(e.target.value)}
-            disabled={!token_ok}
-          >
-            <option value="">Select…</option>
-            {folders.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.displayName} {typeof f.totalItemCount === "number" ? `(${f.totalItemCount})` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ fontSize: 12, opacity: 0.8 }}>
-          Select individual emails to ingest. The selected emails will be stored locally.
-        </div>
-
-        <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid #ddd", marginTop: 8, padding: 6 }}>
-          {messages.length ? (
-            messages.map((m) => {
-              const from = m.from?.emailAddress?.address || "";
-              const checked = selected_ids.has(m.id);
-              return (
-                <label key={m.id} style={{ display: "block", padding: "6px 4px", borderBottom: "1px solid #eee" }}>
-                  <input type="checkbox" checked={checked} onChange={() => toggle_select(m.id)} />{" "}
-                  <strong>{m.subject || "(no subject)"}</strong>
-                  <div style={{ fontSize: 12, opacity: 0.85 }}>
-                    {from} — {m.receivedDateTime || ""}
-                  </div>
-                  <div style={{ fontSize: 12 }}>{truncate(m.bodyPreview || "", 180)}</div>
-                </label>
-              );
-            })
-          ) : (
-            <div style={{ fontSize: 12, opacity: 0.8, padding: 6 }}>
-              {folder_id ? "No messages loaded yet (or folder is empty)." : "Select a folder to view messages."}
-            </div>
-          )}
-        </div>
-
-        <button
-          style={{ marginTop: 10 }}
-          disabled={!token_ok || !folder_id || selected_count === 0}
-          onClick={() => setShowConsent(true)}
-        >
-          ingest selected ({selected_count})
-        </button>
-
-        {show_consent && (
-          <div style={{ border: "1px solid #c00", padding: 10, marginTop: 10, background: "#fff5f5" }}>
-            <strong>Consent required</strong>
-            <p style={{ marginTop: 8, fontSize: 12 }}>
-              {privacy_text}
-            </p>
-
-            <label style={{ display: "block", marginBottom: 8, fontSize: 12 }}>
-              <input
-                type="checkbox"
-                checked={consent_checked}
-                onChange={(e) => setConsentChecked(e.target.checked)}
-              />{" "}
-              I understand and consent to local storage.
-            </label>
-
-            <button disabled={!consent_checked} onClick={() => run_ingest_confirmed()}>
-              confirm ingestion
-            </button>{" "}
-            <button onClick={() => setShowConsent(false)}>
-              cancel
-            </button>
+        <div style={{ border: "1px solid #eee", padding: 10, marginTop: 10 }}>
+          <div style={{ fontSize: 12 }}>
+            <strong>Selection summary</strong>
           </div>
-        )}
+          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
+            Folders selected: {selection_summary.folderCount} — Emails selected: {selection_summary.emailCount}
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>
+            Total to index (approx): {selection_summary.effectiveTotal}
+          </div>
+          {selection_summary.large ? (
+            <div style={{ fontSize: 12, color: "#900", marginTop: 6 }}>
+              Large selections take longer to process and may impact responsiveness.
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <button disabled={!can_continue_from_select()} onClick={go_preview}>
+            Continue
+          </button>
+        </div>
 
         <hr />
 
@@ -530,9 +960,149 @@ export default function TaskPaneView() {
         <div style={{ fontSize: 12, opacity: 0.8 }}>
           Clears locally stored indexed emails and the local search index.
         </div>
-        <button style={{ marginTop: 8 }} disabled={!token_ok} onClick={() => run_clear_index()}>
-          clear local index
+        <button style={{ marginTop: 8 }} disabled={!token_ok} onClick={() => setClearModalOpen(true)}>
+          Clear local index
         </button>
+
+        {render_clear_modal()}
+      </div>
+    );
+  }
+
+  function render_index_preview() {
+    return (
+      <div>
+        <h3 style={{ marginTop: 0 }}>Consent and confirmation</h3>
+
+        <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa" }}>
+          <div style={{ fontSize: 12 }}>
+            <strong>Summary</strong>
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
+            Mode: {ingest_mode === "FOLDERS" ? "Folders" : "Emails"}
+          </div>
+          <div style={{ fontSize: 12, opacity: 0.85 }}>
+            Total to index (approx): {selection_summary.effectiveTotal}
+          </div>
+          {ingest_mode === "FOLDERS" ? (
+            <div style={{ fontSize: 12, opacity: 0.85 }}>
+              Per-folder limit: {folder_limit}
+            </div>
+          ) : null}
+        </div>
+
+        {selection_summary.large ? (
+          <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5", marginTop: 10 }}>
+            <strong>Large selection warning</strong>
+            <div style={{ fontSize: 12, marginTop: 6 }}>
+              Large selections take longer to process and may impact responsiveness.
+            </div>
+            <label style={{ display: "block", fontSize: 12, marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={large_ack_checked}
+                onChange={(e) => setLargeAckChecked(e.target.checked)}
+              />{" "}
+              I understand this may take several minutes.
+            </label>
+          </div>
+        ) : null}
+
+        <div style={{ border: "1px solid #ddd", padding: 10, marginTop: 10 }}>
+          <strong>Consent required</strong>
+          <p style={{ marginTop: 8, fontSize: 12 }}>
+            {privacy_text}
+          </p>
+
+          <label style={{ display: "block", marginBottom: 8, fontSize: 12 }}>
+            <input
+              type="checkbox"
+              checked={consent_checked}
+              onChange={(e) => setConsentChecked(e.target.checked)}
+            />{" "}
+            I consent to local storage and indexing.
+          </label>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <button onClick={back_to_select}>Back</button>{" "}
+          <button
+            disabled={!consent_checked || (selection_summary.large && !large_ack_checked)}
+            onClick={run_ingestion}
+          >
+            Start indexing
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function render_index_running() {
+    return (
+      <div>
+        {render_phase_bar()}
+        {render_cancel_confirm_modal()}
+        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85 }}>
+          Keep Outlook open while indexing runs.
+        </div>
+      </div>
+    );
+  }
+
+  function render_index_cancelled() {
+    return (
+      <div>
+        <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5" }}>
+          <strong>Indexing cancelled</strong>
+          <div style={{ fontSize: 12, marginTop: 6 }}>
+            {cancel_summary || "Indexing cancelled. Some items may already be indexed."}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => setClearModalOpen(true)}>Clear local index</button>
+          <button
+            onClick={() => {
+              setCancelSummary("");
+              cancel_requested_ref.current = false;
+              setIngestStep("SELECT");
+            }}
+          >
+            Return to selection
+          </button>
+        </div>
+
+        {render_clear_modal()}
+      </div>
+    );
+  }
+
+  function render_index_complete() {
+    return (
+      <div>
+        <div style={{ border: "1px solid #0a0", padding: 10, background: "#f5fff5" }}>
+          <strong>Indexing complete</strong>
+          <div style={{ fontSize: 12, marginTop: 6 }}>
+            {complete_summary || "Indexing completed successfully."}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <button onClick={() => setScreen("CHAT")}>Go to chat</button>{" "}
+          <button onClick={() => reset_ingest_state()}>Index more emails</button>
+        </div>
+      </div>
+    );
+  }
+
+  function render_index_management(is_collapsible_panel: boolean) {
+    const body = (
+      <div>
+        {ingest_step === "SELECT" && render_index_select_scope()}
+        {ingest_step === "PREVIEW" && render_index_preview()}
+        {ingest_step === "RUNNING" && render_index_running()}
+        {ingest_step === "CANCELLED" && render_index_cancelled()}
+        {ingest_step === "COMPLETE" && render_index_complete()}
       </div>
     );
 
@@ -560,11 +1130,11 @@ export default function TaskPaneView() {
     );
   }
 
+  // ---------- chat screen ----------
   function render_chat() {
     const no_index = (index_status?.indexed_count || 0) <= 0;
 
     if (no_index) {
-      // Should normally not happen because we disable Chat button, but handle defensively.
       return (
         <div>
           <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5" }}>
@@ -588,7 +1158,7 @@ export default function TaskPaneView() {
 
         <h3>Chat</h3>
         <div style={{ fontSize: 12, opacity: 0.8 }}>
-          Ask questions about your indexed emails. (Chat history will be added in Phase 4.)
+          Ask questions about your indexed emails.
         </div>
 
         <textarea
@@ -620,9 +1190,12 @@ export default function TaskPaneView() {
               <div style={{ fontSize: 12, opacity: 0.8 }}>
                 {s.sender} — {s.received_dt} {typeof s.score === "number" ? `— score: ${s.score.toFixed(4)}` : ""}
               </div>
-              <div style={{ fontSize: 12, marginTop: 6 }}>{s.snippet}</div>
+              <details style={{ marginTop: 6 }}>
+                <summary style={{ cursor: "pointer", fontSize: 12 }}>Show excerpt</summary>
+                <div style={{ fontSize: 12, marginTop: 6 }}>{s.snippet}</div>
+              </details>
               <button style={{ marginTop: 6 }} onClick={() => window.open(s.weblink, "_blank", "noopener,noreferrer")}>
-                open email
+                Open email
               </button>
             </div>
           ))

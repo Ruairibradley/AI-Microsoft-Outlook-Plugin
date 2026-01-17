@@ -9,7 +9,6 @@ async function backend_fetch(path: string, accessToken: string | null, options: 
     ...(options.headers as any || {})
   };
 
-  // Some endpoints do not require auth; most do.
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`;
   }
@@ -35,7 +34,6 @@ export type IndexStatus = {
 };
 
 export function get_index_status() {
-  // index status is local-only; no auth required
   return backend_fetch("/index/status", null);
 }
 
@@ -47,6 +45,19 @@ export function get_folders(accessToken: string) {
 export function get_messages(accessToken: string, folder_id: string, top: number = 25) {
   const q = new URLSearchParams({ folder_id, top: String(top) }).toString();
   return backend_fetch(`/graph/messages?${q}`, accessToken);
+}
+
+export type GraphMessagesPage = {
+  value?: any[];
+  "@odata.nextLink"?: string;
+};
+
+export function get_messages_page(accessToken: string, args: { folder_id?: string; top?: number; next_link?: string }) {
+  const params = new URLSearchParams();
+  if (args.folder_id) params.set("folder_id", args.folder_id);
+  if (typeof args.top === "number") params.set("top", String(args.top));
+  if (args.next_link) params.set("next_link", args.next_link);
+  return backend_fetch(`/graph/messages_page?${params.toString()}`, accessToken);
 }
 
 // ---------- ingest / query ----------
