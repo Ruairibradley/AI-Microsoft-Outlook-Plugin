@@ -42,3 +42,14 @@
 {"event": "ingest", "sqlite_upsert_ms": 5.769200011854991, "sqlite_fetch_ms": 0.2560000284574926, "embedding_ms": 2448.1391000153963, "chroma_write_ms": 69.72299999324605, "ingested_count": 1, "timestamp": "2026-01-17T13:48:28"}
 {"event": "search", "embedding_query_ms": 11.585300002479926, "vector_search_ms": 38.894500001333654, "query": "tell me what my email said", "timestamp": "2026-01-17T13:49:00"}
 {"event": "llm", "llm_inference_ms": 14816.374899994116, "avg_cpu_percent": 63.3, "peak_cpu_percent": 93.5, "peak_mem_mb": 476.5, "model": "qwen2.5:3b", "timestamp": "2026-01-17T13:49:15"}
+{"event": "ingest", "sqlite_upsert_ms": 6.274100014707074, "sqlite_fetch_ms": 0.295300007564947, "embedding_ms": 2486.8934999976773, "chroma_write_ms": 64.56739999703132, "ingested_count": 5, "timestamp": "2026-01-17T14:48:08"}
+{"event": "ingest", "sqlite_upsert_ms": 5.928900005528703, "sqlite_fetch_ms": 0.23320000036619604, "embedding_ms": 51.82940000668168, "chroma_write_ms": 18.590499996207654, "ingested_count": 5, "timestamp": "2026-01-17T14:48:29"}
+{"event": "ingest", "sqlite_upsert_ms": 6.38430000981316, "sqlite_fetch_ms": 0.29700002050958574, "embedding_ms": 49.2200999869965, "chroma_write_ms": 17.630699992878363, "ingested_count": 5, "timestamp": "2026-01-17T14:48:43"}
+{"event": "ingest", "sqlite_upsert_ms": 6.018499989295378, "sqlite_fetch_ms": 0.32699998700991273, "embedding_ms": 46.222399978432804, "chroma_write_ms": 52.778500015847385, "ingested_count": 5, "timestamp": "2026-01-17T14:49:13"}
+{"event": "search", "embedding_query_ms": 10.099500010255724, "vector_search_ms": 37.94350000680424, "query": "what new app has access to my data", "timestamp": "2026-01-17T14:50:26"}
+{"event": "llm", "llm_inference_ms": 26723.266099987086, "avg_cpu_percent": 51.5, "peak_cpu_percent": 66.5, "peak_mem_mb": 505.3, "model": "qwen2.5:3b", "timestamp": "2026-01-17T14:50:53"}
+{"event": "ingest", "sqlite_upsert_ms": 6.755100010195747, "sqlite_fetch_ms": 0.30739998328499496, "embedding_ms": 2616.0975999955554, "chroma_write_ms": 57.58829999831505, "ingested_count": 5, "timestamp": "2026-01-17T15:04:35"}
+{"event": "ingest", "sqlite_upsert_ms": 6.131600006483495, "sqlite_fetch_ms": 0.24470000062137842, "embedding_ms": 47.011900023790076, "chroma_write_ms": 17.703999998047948, "ingested_count": 5, "timestamp": "2026-01-17T15:04:50"}
+{"event": "ingest", "sqlite_upsert_ms": 6.183299992699176, "sqlite_fetch_ms": 0.3038999857380986, "embedding_ms": 46.890700003132224, "chroma_write_ms": 17.076499992981553, "ingested_count": 5, "timestamp": "2026-01-17T15:05:05"}
+{"event": "search", "embedding_query_ms": 9.620700002415106, "vector_search_ms": 34.48100000969134, "query": "whatt new apps have access to my data", "timestamp": "2026-01-17T15:05:42"}
+{"event": "llm", "llm_inference_ms": 30319.443200016394, "avg_cpu_percent": 56.8, "peak_cpu_percent": 85.1, "peak_mem_mb": 497.3, "model": "qwen2.5:3b", "timestamp": "2026-01-17T15:06:12"}

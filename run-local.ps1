@@ -7,7 +7,6 @@ npm run build
 Pop-Location
 
 Write-Host "== Starting FastAPI over HTTPS on https://localhost:8443 =="
-# If you use a venv, activate it before running this script or adjust accordingly.
 python -m uvicorn backend.main:app `
   --host 127.0.0.1 `
   --port 8443 `

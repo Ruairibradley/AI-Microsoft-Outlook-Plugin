@@ -13,12 +13,8 @@ import {
 } from "../api/backend";
 
 type Screen = "SIGNIN" | "CHAT" | "INDEX";
-
-// Phase 3: include CANCELLED as a separate step
 type IngestStep = "SELECT" | "PREVIEW" | "RUNNING" | "CANCELLED" | "COMPLETE";
-
 type IngestMode = "FOLDERS" | "EMAILS";
-
 type Phase = "FETCHING" | "STORING" | "INDEXING" | "DONE";
 
 type folder = {
@@ -58,6 +54,33 @@ function fmt_dt(s: string | null | undefined) {
 
 function uniq<T>(arr: T[]) {
   return Array.from(new Set(arr));
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// Office.js may not be typed in your TS config; keep it safe.
+function try_convert_to_outlook_desktop_url(owaUrl: string): string | null {
+  try {
+    const w: any = window as any;
+    const OfficeObj = w?.Office;
+    const mailbox = OfficeObj?.context?.mailbox;
+    const fn = mailbox?.convertToLocalClientUrl;
+    if (typeof fn === "function") {
+      const localUrl = fn.call(mailbox, owaUrl);
+      if (typeof localUrl === "string" && localUrl.length > 0) return localUrl;
+    }
+  } catch {
+    // ignore and fall back
+  }
+  return null;
 }
 
 export default function TaskPaneView() {
@@ -123,23 +146,22 @@ export default function TaskPaneView() {
   const [consent_checked, setConsentChecked] = useState(false);
   const [large_ack_checked, setLargeAckChecked] = useState(false);
 
-  // run state
+  // run/progress state
   const [run_phase, setRunPhase] = useState<Phase>("FETCHING");
   const [run_total, setRunTotal] = useState<number | null>(null);
-  const [run_done, setRunDone] = useState<number>(0);
+  const [fetch_done, setFetchDone] = useState<number>(0);
+  const [ingest_done, setIngestDone] = useState<number>(0);
 
   const [cancel_confirm_open, setCancelConfirmOpen] = useState(false);
   const [cancel_summary, setCancelSummary] = useState<string>("");
 
   const [complete_summary, setCompleteSummary] = useState<string>("");
 
-  // used to cancel ONLY the folder paging (FETCHING loop)
+  // abort only affects the FETCHING loop
   const abort_ref = useRef<AbortController | null>(null);
-
-  // cancellation requested flag (covers both fetch loop and the later ingest call)
   const cancel_requested_ref = useRef<boolean>(false);
 
-  // ---------- chat (still simple; Phase 4 adds history TTL) ----------
+  // ---------- chat ----------
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<source[]>([]);
@@ -256,9 +278,11 @@ export default function TaskPaneView() {
       setIndexStatus(null);
       setFolders([]);
       reset_ingest_state();
+
       setQuestion("");
       setAnswer("");
       setSources([]);
+
       setScreen("SIGNIN");
       setStatus("not signed in");
     } catch (e: any) {
@@ -287,7 +311,8 @@ export default function TaskPaneView() {
 
     setRunPhase("FETCHING");
     setRunTotal(null);
-    setRunDone(0);
+    setFetchDone(0);
+    setIngestDone(0);
 
     setCancelConfirmOpen(false);
     setCancelSummary("");
@@ -428,7 +453,7 @@ export default function TaskPaneView() {
     setIngestStep("SELECT");
   }
 
-  // ---------- cancel flow (separate CANCELLED step) ----------
+  // ---------- cancel flow ----------
   function cancel_clicked() {
     setCancelConfirmOpen(true);
   }
@@ -439,13 +464,10 @@ export default function TaskPaneView() {
 
   function cancel_confirm_now() {
     setCancelConfirmOpen(false);
-
     cancel_requested_ref.current = true;
 
-    // Abort only the FETCHING paging loop (if in progress)
     if (abort_ref.current) abort_ref.current.abort();
 
-    // Move to CANCELLED step immediately (per spec)
     setCancelSummary("Indexing cancelled. Some items may already be indexed.");
     setIngestStep("CANCELLED");
   }
@@ -465,22 +487,25 @@ export default function TaskPaneView() {
     cancel_requested_ref.current = false;
 
     setIngestStep("RUNNING");
-    setRunDone(0);
-    setRunTotal(selection_summary.effectiveTotal || null);
     setRunPhase("FETCHING");
+    setRunTotal(selection_summary.effectiveTotal || null);
+    setFetchDone(0);
+    setIngestDone(0);
 
-    // Abort controller affects only the FETCHING loop.
+    const MIN_PHASE_MS = 450;
+    let phaseStart = Date.now();
+
     const ac = new AbortController();
     abort_ref.current = ac;
 
     try {
-      // 1) Build list of message IDs (FETCHING)
+      // 1) Build IDs (FETCHING)
       let message_ids: string[] = [];
       const PAGE_SIZE = 25;
 
       if (ingest_mode === "EMAILS") {
         message_ids = Array.from(selected_email_ids);
-        setRunDone(message_ids.length);
+        setFetchDone(message_ids.length);
       } else {
         const selected = folders.filter((f) => selected_folder_ids.has(f.id));
         const all_ids: string[] = [];
@@ -496,11 +521,8 @@ export default function TaskPaneView() {
 
             let pageData: GraphMessagesPage;
 
-            if (next_link) {
-              pageData = await get_messages_page(access_token, { next_link, top: PAGE_SIZE });
-            } else {
-              pageData = await get_messages_page(access_token, { folder_id: f.id, top: PAGE_SIZE });
-            }
+            if (next_link) pageData = await get_messages_page(access_token, { next_link, top: PAGE_SIZE });
+            else pageData = await get_messages_page(access_token, { folder_id: f.id, top: PAGE_SIZE });
 
             const page = (pageData.value || []) as graph_message[];
             next_link = (pageData as any)["@odata.nextLink"] || null;
@@ -512,7 +534,7 @@ export default function TaskPaneView() {
               all_ids.push(m.id);
               collected += 1;
               done += 1;
-              setRunDone(done);
+              setFetchDone(done);
             }
 
             if (!next_link) break;
@@ -523,22 +545,48 @@ export default function TaskPaneView() {
       }
 
       if (!message_ids.length) throw new Error("No messages selected.");
-
-      // If cancelled during fetch/build
       if (cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
 
-      // 2) STORING (backend ingest call)
+      // Make FETCHING visible
+      {
+        const elapsed = Date.now() - phaseStart;
+        if (elapsed < MIN_PHASE_MS) await sleep(MIN_PHASE_MS - elapsed);
+      }
+
+      // 2) STORING: batch ingest calls so progress is visible
       setRunPhase("STORING");
+      phaseStart = Date.now();
 
       const folder_id_to_send = ingest_mode === "EMAILS" ? (email_folder_id || "selected") : "multi";
 
-      await ingest_messages(access_token, folder_id_to_send, message_ids);
+      const BATCH_SIZE = 10;
+      const batches = chunk(message_ids, BATCH_SIZE);
 
-      // If user cancelled while ingest call was executing, we still honor cancellation UI state.
+      let ingested = 0;
+      for (const b of batches) {
+        if (cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
+        await ingest_messages(access_token, folder_id_to_send, b);
+        ingested += b.length;
+        setIngestDone(ingested);
+      }
+
+      // Make STORING visible
+      {
+        const elapsed = Date.now() - phaseStart;
+        if (elapsed < MIN_PHASE_MS) await sleep(MIN_PHASE_MS - elapsed);
+      }
+
       if (cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
 
-      // 3) INDEXING (backend rebuilds during ingest; keep phase explicit)
+      // 3) INDEXING: backend rebuild happens during ingest; keep a visible phase
       setRunPhase("INDEXING");
+      phaseStart = Date.now();
+
+      {
+        const elapsed = Date.now() - phaseStart;
+        if (elapsed < MIN_PHASE_MS) await sleep(MIN_PHASE_MS - elapsed);
+      }
+
       setRunPhase("DONE");
 
       await refresh_index_status();
@@ -552,11 +600,11 @@ export default function TaskPaneView() {
 
       setCompleteSummary(`${summary} Index updated at ${fmt_dt(st.last_updated)}.`);
       setIngestStep("COMPLETE");
-    } catch (e: any) {
+    } catch (e: any) {  // <-- FIXED HERE
       const msg = String(e?.message || e);
 
       if (msg === "CANCELLED_BY_USER") {
-        await refresh_index_status(); // reflect any partial indexing that may have happened
+        await refresh_index_status();
         setCancelSummary("Indexing cancelled. Some items may already be indexed.");
         setIngestStep("CANCELLED");
         return;
@@ -680,7 +728,10 @@ export default function TaskPaneView() {
     );
   }
 
-  // ---------- Index management wizard ----------
+  function progress_done_now(): number {
+    return run_phase === "FETCHING" ? fetch_done : ingest_done;
+  }
+
   function render_phase_bar() {
     const phases: { key: Phase; label: string }[] = [
       { key: "FETCHING", label: "Fetching emails" },
@@ -690,6 +741,7 @@ export default function TaskPaneView() {
     ];
 
     const currentIdx = phases.findIndex((p) => p.key === run_phase);
+    const doneNow = progress_done_now();
 
     return (
       <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa" }}>
@@ -722,17 +774,17 @@ export default function TaskPaneView() {
               style={{
                 height: 8,
                 width: run_total
-                  ? `${Math.min(100, Math.round((run_done / Math.max(1, run_total)) * 100))}%`
-                  : (run_phase === "FETCHING" ? "35%" : run_phase === "STORING" ? "60%" : run_phase === "INDEXING" ? "85%" : "100%"),
+                  ? `${Math.min(100, Math.round((doneNow / Math.max(1, run_total)) * 100))}%`
+                  : "25%",
                 background: "#bbb"
               }}
             />
           </div>
           <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
             {run_total ? (
-              <span>Processed {run_done} / {run_total} emails</span>
+              <span>Processed {doneNow} / {run_total} emails</span>
             ) : (
-              <span>Processed {run_done} emails</span>
+              <span>Processed {doneNow} emails</span>
             )}
           </div>
         </div>
@@ -792,6 +844,7 @@ export default function TaskPaneView() {
     );
   }
 
+  // --- Index management render sections ---
   function render_index_select_scope() {
     return (
       <div>
@@ -936,7 +989,7 @@ export default function TaskPaneView() {
             <strong>Selection summary</strong>
           </div>
           <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
-            Folders selected: {selection_summary.folderCount} — Emails selected: {selection_summary.emailCount}
+            Folders selected: {selected_folder_ids.size} — Emails selected: {selected_email_ids.size}
           </div>
           <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>
             Total to index (approx): {selection_summary.effectiveTotal}
@@ -1194,7 +1247,14 @@ export default function TaskPaneView() {
                 <summary style={{ cursor: "pointer", fontSize: 12 }}>Show excerpt</summary>
                 <div style={{ fontSize: 12, marginTop: 6 }}>{s.snippet}</div>
               </details>
-              <button style={{ marginTop: 6 }} onClick={() => window.open(s.weblink, "_blank", "noopener,noreferrer")}>
+
+              <button
+                style={{ marginTop: 6 }}
+                onClick={() => {
+                  const local = try_convert_to_outlook_desktop_url(s.weblink);
+                  window.open(local || s.weblink, "_blank", "noopener,noreferrer");
+                }}
+              >
                 Open email
               </button>
             </div>
