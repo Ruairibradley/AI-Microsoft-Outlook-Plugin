@@ -4,7 +4,15 @@ import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 
 from .chroma_service import get_client
-from .database import get_conn, init_db, set_meta, get_meta
+from .database import (
+    get_conn,
+    init_db,
+    set_meta,
+    get_meta,
+    upsert_ingestion,
+    set_ingestion_count,
+    list_ingestions as db_list_ingestions,
+)
 from .embedding_service import embed_texts
 from .timing_utils import timer
 
@@ -12,7 +20,6 @@ COLLECTION_NAME = "emails"
 
 
 def _now_iso() -> str:
-    # ISO-like timestamp (no timezone) consistent with your existing logging style
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
@@ -41,11 +48,6 @@ def _normalize_message(m: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_index_status() -> Dict[str, Any]:
-    """
-    Returns minimal index status needed by the UI:
-      - indexed_count
-      - last_updated (null if never ingested)
-    """
     conn = get_conn()
     init_db(conn)
     cur = conn.cursor()
@@ -57,14 +59,23 @@ def get_index_status() -> Dict[str, Any]:
 
     return {
         "indexed_count": indexed_count,
-        "last_updated": last_updated,  # may be None
+        "last_updated": last_updated,
         "timestamp": _now_iso(),
     }
+
+
+def list_ingestions(limit: int = 50) -> Dict[str, Any]:
+    conn = get_conn()
+    init_db(conn)
+    return {"ingestions": db_list_ingestions(conn, limit=limit), "timestamp": _now_iso()}
 
 
 def ingest_messages(
     messages: List[Dict[str, Any]],
     folder_id: Optional[str] = None,
+    ingestion_id: Optional[str] = None,
+    ingestion_label: Optional[str] = None,
+    ingest_mode: Optional[str] = None,
     log_timings: bool = False
 ) -> Dict[str, Any]:
     timings: Dict[str, Any] = {}
@@ -76,25 +87,39 @@ def ingest_messages(
     if not normalized:
         return {"ingested_count": 0, "timestamp": _now_iso()}
 
+    now = _now_iso()
+    ingestion_id = ingestion_id or f"ingest_{int(time.time())}"
+    ingest_mode = ingest_mode or "UNKNOWN"
+    ingestion_label = ingestion_label or f"{ingest_mode} {now}"
+
+    # Ensure ingestion record exists
+    upsert_ingestion(conn, ingestion_id=ingestion_id, created_at=now, label=ingestion_label, mode=ingest_mode)
+
     with timer(timings, "sqlite_upsert_ms"):
         for m in normalized:
             cur.execute(
                 """
                 INSERT OR REPLACE INTO emails
-                (message_id, folder_id, subject, sender, received_dt, weblink, content)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (message_id, folder_id, subject, sender, received_dt, weblink, content, ingestion_id, ingested_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (m["message_id"], folder_id, m["subject"], m["sender"], m["received_dt"], m["weblink"], m["content"]),
+                (
+                    m["message_id"],
+                    folder_id,
+                    m["subject"],
+                    m["sender"],
+                    m["received_dt"],
+                    m["weblink"],
+                    m["content"],
+                    ingestion_id,
+                    now,
+                ),
             )
         conn.commit()
 
-    # Rebuild embedding index from all stored docs (simple MVP behavior)
-    with timer(timings, "sqlite_fetch_ms"):
-        cur.execute("SELECT message_id, content FROM emails")
-        rows = cur.fetchall()
-
-    ids = [r["message_id"] for r in rows]
-    docs = [r["content"] for r in rows]
+    # Update embeddings incrementally for the ingested docs only
+    ids = [m["message_id"] for m in normalized]
+    docs = [m["content"] for m in normalized]
 
     with timer(timings, "embedding_ms"):
         vectors = np.asarray(embed_texts(docs), dtype=np.float32)
@@ -102,10 +127,11 @@ def ingest_messages(
     client = get_client()
     collection = client.get_or_create_collection(name=COLLECTION_NAME)
 
-    with timer(timings, "chroma_write_ms"):
+    with timer(timings, "chroma_upsert_ms"):
         if hasattr(collection, "upsert"):
             collection.upsert(ids=ids, embeddings=vectors)
         else:
+            # fallback: recreate collection (rare older chroma versions)
             try:
                 client.delete_collection(COLLECTION_NAME)
             except Exception:
@@ -113,11 +139,16 @@ def ingest_messages(
             collection = client.get_or_create_collection(name=COLLECTION_NAME)
             collection.add(ids=ids, embeddings=vectors)
 
+    # Recompute ingestion count deterministically
+    cur.execute("SELECT COUNT(*) AS c FROM emails WHERE ingestion_id = ?", (ingestion_id,))
+    set_ingestion_count(conn, ingestion_id, int(cur.fetchone()["c"]))
+
     # Update index metadata
-    set_meta(conn, "last_updated", _now_iso())
+    set_meta(conn, "last_updated", now)
 
     timings["ingested_count"] = len(normalized)
-    timings["timestamp"] = _now_iso()
+    timings["ingestion_id"] = ingestion_id
+    timings["timestamp"] = now
 
     if log_timings:
         with open("latency_log.jsonl", "a", encoding="utf-8") as f:
@@ -184,7 +215,9 @@ def clear_index() -> Dict[str, Any]:
     conn = get_conn()
     init_db(conn)
     cur = conn.cursor()
+
     cur.execute("DELETE FROM emails")
+    cur.execute("DELETE FROM ingestions")
     conn.commit()
 
     client = get_client()
@@ -193,7 +226,33 @@ def clear_index() -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Update metadata
     set_meta(conn, "last_updated", _now_iso())
-
     return {"cleared": True, "timestamp": _now_iso()}
+
+
+def clear_ingestion(ingestion_id: str) -> Dict[str, Any]:
+    conn = get_conn()
+    init_db(conn)
+    cur = conn.cursor()
+
+    # Find message ids in this ingestion for chroma delete
+    cur.execute("SELECT message_id FROM emails WHERE ingestion_id = ?", (ingestion_id,))
+    ids = [r["message_id"] for r in cur.fetchall()]
+
+    # Delete from sqlite
+    cur.execute("DELETE FROM emails WHERE ingestion_id = ?", (ingestion_id,))
+    cur.execute("DELETE FROM ingestions WHERE ingestion_id = ?", (ingestion_id,))
+    conn.commit()
+
+    # Delete from chroma by ids (best-effort)
+    client = get_client()
+    collection = client.get_or_create_collection(name=COLLECTION_NAME)
+    try:
+        if ids and hasattr(collection, "delete"):
+            collection.delete(ids=ids)
+    except Exception:
+        # If delete isn't supported, leave embeddings; search may return stale ids but sqlite filter will drop them.
+        pass
+
+    set_meta(conn, "last_updated", _now_iso())
+    return {"cleared_ingestion_id": ingestion_id, "deleted_ids": len(ids), "timestamp": _now_iso()}

@@ -43,7 +43,6 @@ def list_messages_page(access_token: str, folder_id: Optional[str], top: int = 2
     If next_link is provided, it must be a Microsoft Graph URL (SSRF-safe check).
     """
     if next_link:
-        # SSRF safety: only allow https://graph.microsoft.com/...
         parsed = urlparse(next_link)
         if parsed.scheme != "https" or parsed.netloc.lower() != "graph.microsoft.com":
             raise ValueError("Invalid next_link host.")
@@ -60,3 +59,15 @@ def list_messages_page(access_token: str, folder_id: Optional[str], top: int = 2
     r = requests.get(url, headers=_headers(access_token), timeout=30)
     r.raise_for_status()
     return r.json()
+
+
+def get_message_weblink(access_token: str, message_id: str) -> str:
+    """
+    Fetches a fresh webLink for a message id.
+    This addresses cases where stored webLink becomes stale after moves.
+    """
+    url = f"{GRAPH_ROOT}/me/messages/{message_id}?$select=webLink"
+    r = requests.get(url, headers=_headers(access_token), timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    return data.get("webLink") or ""

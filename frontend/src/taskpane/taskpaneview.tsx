@@ -3,19 +3,25 @@ import { sign_in_interactive, try_get_access_token_silent, get_signed_in_user, s
 import {
   ask_question,
   clear_index,
+  clear_ingestion,
   get_folders,
+  get_message_link,
   get_messages,
   ingest_messages,
   get_index_status,
   get_messages_page,
+  list_ingestions,
   type GraphMessagesPage,
-  type IndexStatus
+  type IndexStatus,
+  type IngestionInfo
 } from "../api/backend";
 
 type Screen = "SIGNIN" | "CHAT" | "INDEX";
 type IngestStep = "SELECT" | "PREVIEW" | "RUNNING" | "CANCELLED" | "COMPLETE";
 type IngestMode = "FOLDERS" | "EMAILS";
 type Phase = "FETCHING" | "STORING" | "INDEXING" | "DONE";
+
+type ChatState = "EMPTY" | "ACTIVE" | "RESTORED";
 
 type folder = {
   id: string;
@@ -42,6 +48,14 @@ type source = {
   score?: number;
 };
 
+type ChatMsg = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  created_at_ms: number;
+  sources?: source[];
+};
+
 function truncate(s: string, n: number) {
   if (!s) return "";
   return s.length <= n ? s : s.slice(0, n) + "…";
@@ -66,7 +80,19 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
-// Office.js may not be typed in your TS config; keep it safe.
+function now_iso_local() {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function make_id(prefix: string): string {
+  const c: any = (globalThis as any).crypto;
+  if (c?.randomUUID) return `${prefix}_${c.randomUUID()}`;
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+// Office.js may not be typed in TS; keep it safe.
 function try_convert_to_outlook_desktop_url(owaUrl: string): string | null {
   try {
     const w: any = window as any;
@@ -78,9 +104,60 @@ function try_convert_to_outlook_desktop_url(owaUrl: string): string | null {
       if (typeof localUrl === "string" && localUrl.length > 0) return localUrl;
     }
   } catch {
-    // ignore and fall back
+    // ignore
   }
   return null;
+}
+
+// ------------------- Phase 4: chat persistence -------------------
+const CHAT_TTL_MS = 60 * 60 * 1000; // 1 hour
+const LS_CHAT_KEY = "chat_history";
+const LS_CHAT_TS_KEY = "chat_history_ts";
+
+function load_chat_from_storage(): { msgs: ChatMsg[]; ts_ms: number } | null {
+  try {
+    const tsRaw = localStorage.getItem(LS_CHAT_TS_KEY);
+    const dataRaw = localStorage.getItem(LS_CHAT_KEY);
+    if (!tsRaw || !dataRaw) return null;
+
+    const ts_ms = Number(tsRaw);
+    if (!Number.isFinite(ts_ms) || ts_ms <= 0) return null;
+
+    const parsed = JSON.parse(dataRaw);
+    if (!Array.isArray(parsed)) return null;
+
+    const msgs: ChatMsg[] = parsed
+      .filter((m: any) => m && typeof m === "object")
+      .map((m: any) => ({
+        id: String(m.id || make_id("msg")),
+        role: m.role === "assistant" ? "assistant" : "user",
+        text: String(m.text || ""),
+        created_at_ms: Number(m.created_at_ms || ts_ms),
+        sources: Array.isArray(m.sources) ? m.sources : undefined
+      }));
+
+    return { msgs, ts_ms };
+  } catch {
+    return null;
+  }
+}
+
+function save_chat_to_storage(msgs: ChatMsg[]) {
+  try {
+    localStorage.setItem(LS_CHAT_KEY, JSON.stringify(msgs));
+    localStorage.setItem(LS_CHAT_TS_KEY, String(Date.now()));
+  } catch {
+    // ignore (storage may be blocked)
+  }
+}
+
+function clear_chat_storage() {
+  try {
+    localStorage.removeItem(LS_CHAT_KEY);
+    localStorage.removeItem(LS_CHAT_TS_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 export default function TaskPaneView() {
@@ -107,46 +184,124 @@ export default function TaskPaneView() {
   const [index_status, setIndexStatus] = useState<IndexStatus | null>(null);
   const [index_panel_open, setIndexPanelOpen] = useState<boolean>(false);
 
+  // ---------- ingestion runs ----------
+  const [ingestions, setIngestions] = useState<IngestionInfo[]>([]);
+  const [selected_clear_mode, setSelectedClearMode] = useState<"ALL" | "ONE">("ALL");
+  const [selected_ingestion_id_to_clear, setSelectedIngestionIdToClear] = useState<string>("");
+
+  async function refresh_ingestions() {
+    try {
+      const res = await list_ingestions(null, 50);
+      const arr = (res.ingestions || []) as IngestionInfo[];
+      setIngestions(arr);
+      if (!selected_ingestion_id_to_clear && arr.length) {
+        setSelectedIngestionIdToClear(arr[0].ingestion_id);
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  // ---------- Phase 4 chat state ----------
+  const [chat_state, setChatState] = useState<ChatState>("EMPTY");
+  const [chat_msgs, setChatMsgs] = useState<ChatMsg[]>([]);
+  const [chat_expired_note, setChatExpiredNote] = useState<boolean>(false);
+
+  function append_chat(msg: ChatMsg) {
+    setChatMsgs((prev) => {
+      const next = [...prev, msg];
+      save_chat_to_storage(next);
+      return next;
+    });
+    setChatState("ACTIVE");
+  }
+
+  function replace_last_assistant(msgId: string, newText: string, newSources?: source[]) {
+    setChatMsgs((prev) => {
+      const next = prev.map((m) => {
+        if (m.id !== msgId) return m;
+        return { ...m, text: newText, sources: newSources };
+      });
+      save_chat_to_storage(next);
+      return next;
+    });
+    setChatState("ACTIVE");
+  }
+
+  function restore_chat_if_valid(indexExists: boolean) {
+    if (!indexExists) {
+      // If no index, we do not restore chat.
+      setChatMsgs([]);
+      setChatState("EMPTY");
+      setChatExpiredNote(false);
+      return;
+    }
+
+    const loaded = load_chat_from_storage();
+    if (!loaded) {
+      setChatMsgs([]);
+      setChatState("EMPTY");
+      setChatExpiredNote(false);
+      return;
+    }
+
+    const age = Date.now() - loaded.ts_ms;
+    if (age <= CHAT_TTL_MS) {
+      setChatMsgs(loaded.msgs);
+      setChatState(loaded.msgs.length ? "RESTORED" : "EMPTY");
+      setChatExpiredNote(false);
+    } else {
+      // expired
+      clear_chat_storage();
+      setChatMsgs([]);
+      setChatState("EMPTY");
+      setChatExpiredNote(true);
+    }
+  }
+
   async function refresh_index_status(nextPreferredScreen: Screen | null = null) {
     const st = (await get_index_status()) as IndexStatus;
     setIndexStatus(st);
 
-    if ((st?.indexed_count || 0) <= 0) {
+    const indexExists = (st?.indexed_count || 0) > 0;
+
+    if (!indexExists) {
       setScreen("INDEX");
       setIndexPanelOpen(true);
-      return;
+      // do not restore chat when index is empty
+      restore_chat_if_valid(false);
+    } else {
+      if (nextPreferredScreen) setScreen(nextPreferredScreen);
+      else if (screen === "SIGNIN") setScreen("CHAT");
+
+      // Phase 4: restore chat once we know index exists
+      restore_chat_if_valid(true);
     }
 
-    if (nextPreferredScreen) setScreen(nextPreferredScreen);
-    else if (screen === "SIGNIN") setScreen("CHAT");
+    await refresh_ingestions();
   }
 
   // ---------- graph data ----------
   const [folders, setFolders] = useState<folder[]>([]);
   const [folder_filter, setFolderFilter] = useState("");
 
-  // Messages view for email selection mode
   const [email_folder_id, setEmailFolderId] = useState("");
   const [messages, setMessages] = useState<graph_message[]>([]);
   const [messages_filter, setMessagesFilter] = useState("");
   const [messages_next_link, setMessagesNextLink] = useState<string | null>(null);
 
-  // ---------- ingestion wizard state ----------
+  // ---------- ingestion wizard ----------
   const [ingest_step, setIngestStep] = useState<IngestStep>("SELECT");
   const [ingest_mode, setIngestMode] = useState<IngestMode>("FOLDERS");
 
-  // folder selection
   const [selected_folder_ids, setSelectedFolderIds] = useState<Set<string>>(new Set());
-  const [folder_limit, setFolderLimit] = useState<number>(100); // per folder (latest N)
+  const [folder_limit, setFolderLimit] = useState<number>(100);
 
-  // email selection
   const [selected_email_ids, setSelectedEmailIds] = useState<Set<string>>(new Set());
 
-  // consent + warnings
   const [consent_checked, setConsentChecked] = useState(false);
   const [large_ack_checked, setLargeAckChecked] = useState(false);
 
-  // run/progress state
   const [run_phase, setRunPhase] = useState<Phase>("FETCHING");
   const [run_total, setRunTotal] = useState<number | null>(null);
   const [fetch_done, setFetchDone] = useState<number>(0);
@@ -154,19 +309,25 @@ export default function TaskPaneView() {
 
   const [cancel_confirm_open, setCancelConfirmOpen] = useState(false);
   const [cancel_summary, setCancelSummary] = useState<string>("");
-
   const [complete_summary, setCompleteSummary] = useState<string>("");
 
-  // abort only affects the FETCHING loop
+  // abort only affects FETCHING loop
   const abort_ref = useRef<AbortController | null>(null);
   const cancel_requested_ref = useRef<boolean>(false);
 
-  // ---------- chat ----------
-  const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState("");
-  const [sources, setSources] = useState<source[]>([]);
+  // pause gate
+  const pause_requested_ref = useRef<boolean>(false);
+  const pause_resolve_ref = useRef<null | ((v: "continue" | "cancel") => void)>(null);
 
-  // ---------- clear index confirmation modal ----------
+  function wait_for_cancel_decision(): Promise<"continue" | "cancel"> {
+    return new Promise((resolve) => {
+      pause_resolve_ref.current = resolve;
+    });
+  }
+
+  const run_ingestion_id_ref = useRef<string>("");
+
+  // ---------- clear index modal ----------
   const [clear_modal_open, setClearModalOpen] = useState(false);
   const [clear_confirm_checked, setClearConfirmChecked] = useState(false);
 
@@ -180,7 +341,6 @@ export default function TaskPaneView() {
     ].join(" ");
   }, []);
 
-  // ---------- startup ----------
   async function load_folders_with_token(token: string) {
     setBusy("loading folders...");
     const data = await get_folders(token);
@@ -234,7 +394,6 @@ export default function TaskPaneView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------- auth actions ----------
   async function sign_in_clicked() {
     set_error("");
     setBusy("signing in...");
@@ -279,9 +438,11 @@ export default function TaskPaneView() {
       setFolders([]);
       reset_ingest_state();
 
-      setQuestion("");
-      setAnswer("");
-      setSources([]);
+      // Phase 4: clear chat storage on sign-out (prevents cross-account restore confusion)
+      clear_chat_storage();
+      setChatMsgs([]);
+      setChatState("EMPTY");
+      setChatExpiredNote(false);
 
       setScreen("SIGNIN");
       setStatus("not signed in");
@@ -293,7 +454,6 @@ export default function TaskPaneView() {
     }
   }
 
-  // ---------- ingestion helpers ----------
   function reset_ingest_state() {
     setIngestStep("SELECT");
     setIngestMode("FOLDERS");
@@ -320,6 +480,9 @@ export default function TaskPaneView() {
 
     abort_ref.current = null;
     cancel_requested_ref.current = false;
+    pause_requested_ref.current = false;
+    pause_resolve_ref.current = null;
+    run_ingestion_id_ref.current = "";
   }
 
   const index_empty = (index_status?.indexed_count || 0) <= 0;
@@ -389,7 +552,6 @@ export default function TaskPaneView() {
     };
   }, [selected_folder_ids, selected_email_ids, folders, ingest_mode, folder_limit]);
 
-  // ---------- messages loading for EMAIL mode ----------
   async function load_email_folder(fid: string) {
     setEmailFolderId(fid);
     setMessages([]);
@@ -433,7 +595,6 @@ export default function TaskPaneView() {
     }
   }
 
-  // ---------- wizard transitions ----------
   function can_continue_from_select(): boolean {
     if (ingest_mode === "FOLDERS") return selected_folder_ids.size > 0;
     return selected_email_ids.size > 0;
@@ -453,18 +614,25 @@ export default function TaskPaneView() {
     setIngestStep("SELECT");
   }
 
-  // ---------- cancel flow ----------
   function cancel_clicked() {
+    pause_requested_ref.current = true;
     setCancelConfirmOpen(true);
   }
 
   function cancel_continue() {
     setCancelConfirmOpen(false);
+    pause_requested_ref.current = false;
+    pause_resolve_ref.current?.("continue");
+    pause_resolve_ref.current = null;
   }
 
   function cancel_confirm_now() {
     setCancelConfirmOpen(false);
     cancel_requested_ref.current = true;
+    pause_requested_ref.current = false;
+
+    pause_resolve_ref.current?.("cancel");
+    pause_resolve_ref.current = null;
 
     if (abort_ref.current) abort_ref.current.abort();
 
@@ -472,19 +640,23 @@ export default function TaskPaneView() {
     setIngestStep("CANCELLED");
   }
 
-  // ---------- ingestion run ----------
   async function run_ingestion() {
     if (!token_ok || !access_token) {
       alert("Please sign in first.");
       return;
     }
-
     if (!consent_checked) return;
     if (selection_summary.large && !large_ack_checked) return;
 
     set_error("");
     setCancelSummary("");
     cancel_requested_ref.current = false;
+    pause_requested_ref.current = false;
+    pause_resolve_ref.current = null;
+
+    const run_id = make_id("ing");
+    run_ingestion_id_ref.current = run_id;
+    const run_label = `${ingest_mode} ${now_iso_local()}`;
 
     setIngestStep("RUNNING");
     setRunPhase("FETCHING");
@@ -492,14 +664,14 @@ export default function TaskPaneView() {
     setFetchDone(0);
     setIngestDone(0);
 
-    const MIN_PHASE_MS = 450;
+    const MIN_PHASE_MS = 250;
     let phaseStart = Date.now();
 
     const ac = new AbortController();
     abort_ref.current = ac;
 
     try {
-      // 1) Build IDs (FETCHING)
+      // 1) Build IDs
       let message_ids: string[] = [];
       const PAGE_SIZE = 25;
 
@@ -517,16 +689,18 @@ export default function TaskPaneView() {
           let collected = 0;
 
           while (collected < limit) {
+            if (pause_requested_ref.current) {
+              const decision = await wait_for_cancel_decision();
+              if (decision === "cancel") throw new Error("CANCELLED_BY_USER");
+            }
             if (ac.signal.aborted || cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
 
             let pageData: GraphMessagesPage;
-
             if (next_link) pageData = await get_messages_page(access_token, { next_link, top: PAGE_SIZE });
             else pageData = await get_messages_page(access_token, { folder_id: f.id, top: PAGE_SIZE });
 
             const page = (pageData.value || []) as graph_message[];
             next_link = (pageData as any)["@odata.nextLink"] || null;
-
             if (!page.length) break;
 
             for (const m of page) {
@@ -545,48 +719,52 @@ export default function TaskPaneView() {
       }
 
       if (!message_ids.length) throw new Error("No messages selected.");
-      if (cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
 
-      // Make FETCHING visible
+      // make FETCHING visible
       {
         const elapsed = Date.now() - phaseStart;
         if (elapsed < MIN_PHASE_MS) await sleep(MIN_PHASE_MS - elapsed);
       }
 
-      // 2) STORING: batch ingest calls so progress is visible
+      // 2) STORING: batched ingestion
       setRunPhase("STORING");
       phaseStart = Date.now();
 
       const folder_id_to_send = ingest_mode === "EMAILS" ? (email_folder_id || "selected") : "multi";
-
-      const BATCH_SIZE = 10;
+      const BATCH_SIZE = 5;
       const batches = chunk(message_ids, BATCH_SIZE);
 
       let ingested = 0;
+
       for (const b of batches) {
+        if (pause_requested_ref.current) {
+          const decision = await wait_for_cancel_decision();
+          if (decision === "cancel") throw new Error("CANCELLED_BY_USER");
+        }
         if (cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
-        await ingest_messages(access_token, folder_id_to_send, b);
+
+        await ingest_messages(access_token, folder_id_to_send, b, {
+          ingestion_id: run_id,
+          ingestion_label: run_label,
+          ingest_mode: ingest_mode
+        });
+
         ingested += b.length;
         setIngestDone(ingested);
       }
 
-      // Make STORING visible
       {
         const elapsed = Date.now() - phaseStart;
         if (elapsed < MIN_PHASE_MS) await sleep(MIN_PHASE_MS - elapsed);
       }
 
-      if (cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
-
-      // 3) INDEXING: backend rebuild happens during ingest; keep a visible phase
+      // 3) INDEXING: show brief phase
       setRunPhase("INDEXING");
       phaseStart = Date.now();
-
       {
         const elapsed = Date.now() - phaseStart;
         if (elapsed < MIN_PHASE_MS) await sleep(MIN_PHASE_MS - elapsed);
       }
-
       setRunPhase("DONE");
 
       await refresh_index_status();
@@ -600,7 +778,7 @@ export default function TaskPaneView() {
 
       setCompleteSummary(`${summary} Index updated at ${fmt_dt(st.last_updated)}.`);
       setIngestStep("COMPLETE");
-    } catch (e: any) {  // <-- FIXED HERE
+    } catch (e: any) {
       const msg = String(e?.message || e);
 
       if (msg === "CANCELLED_BY_USER") {
@@ -618,10 +796,11 @@ export default function TaskPaneView() {
     } finally {
       abort_ref.current = null;
       setBusy("");
+      pause_requested_ref.current = false;
+      pause_resolve_ref.current = null;
     }
   }
 
-  // ---------- clear index flow ----------
   async function clear_index_confirmed() {
     if (!token_ok || !access_token) return;
 
@@ -629,39 +808,100 @@ export default function TaskPaneView() {
     setBusy("clearing local index...");
 
     try {
-      await clear_index(access_token);
+      if (selected_clear_mode === "ALL") {
+        await clear_index(access_token);
+      } else {
+        if (!selected_ingestion_id_to_clear) throw new Error("No ingestion selected.");
+        await clear_ingestion(null, selected_ingestion_id_to_clear);
+      }
+
       await refresh_index_status("INDEX");
       reset_ingest_state();
       setClearModalOpen(false);
       setClearConfirmChecked(false);
+
+      // Phase 4: if index is cleared entirely, also clear chat (prevents orphaned transcript)
+      if (selected_clear_mode === "ALL") {
+        clear_chat_storage();
+        setChatMsgs([]);
+        setChatState("EMPTY");
+        setChatExpiredNote(false);
+      }
     } catch (e: any) {
-      set_error("Failed to clear local index. Please try again.", String(e?.message || e));
+      set_error("Failed to clear. Please try again.", String(e?.message || e));
     } finally {
       setBusy("");
     }
   }
 
-  // ---------- query ----------
-  async function run_query() {
+  // ------------- Phase 4: Chat send / persist / restore -------------
+  const [draft, setDraft] = useState<string>("");
+  const [sending, setSending] = useState<boolean>(false);
+
+  async function send_chat() {
     if (!token_ok || !access_token) {
       alert("Please sign in first.");
       return;
     }
+    if ((index_status?.indexed_count || 0) <= 0) {
+      alert("Index emails first using Index management.");
+      return;
+    }
 
-    const q = question.trim();
+    const q = draft.trim();
     if (!q) return;
 
-    setBusy("querying local index...");
+    setSending(true);
     set_error("");
+
+    const userMsg: ChatMsg = {
+      id: make_id("chat"),
+      role: "user",
+      text: q,
+      created_at_ms: Date.now()
+    };
+    append_chat(userMsg);
+
+    setDraft("");
+
+    const placeholderId = make_id("chat");
+    const assistantPlaceholder: ChatMsg = {
+      id: placeholderId,
+      role: "assistant",
+      text: "Working…",
+      created_at_ms: Date.now()
+    };
+    append_chat(assistantPlaceholder);
 
     try {
       const res = await ask_question(access_token, q, 4);
-      setAnswer(res.answer || "");
-      setSources((res.sources || []) as source[]);
+      const answer = String(res.answer || "");
+      const srcs = (res.sources || []) as source[];
+      replace_last_assistant(placeholderId, answer || "No answer.", srcs);
     } catch (e: any) {
+      replace_last_assistant(placeholderId, "Query failed. Please try again.", []);
       set_error("Query failed. If the local index is unavailable, clear it and re-ingest.", String(e?.message || e));
     } finally {
-      setBusy("");
+      setSending(false);
+    }
+  }
+
+  async function open_email(message_id: string, fallback_weblink: string) {
+    if (!token_ok || !access_token) {
+      window.open(fallback_weblink, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    try {
+      const res = await get_message_link(access_token, message_id);
+      const fresh = (res.weblink || "") as string;
+      const urlToUse = fresh || fallback_weblink;
+
+      const local = try_convert_to_outlook_desktop_url(urlToUse);
+      window.open(local || urlToUse, "_blank", "noopener,noreferrer");
+    } catch {
+      const local = try_convert_to_outlook_desktop_url(fallback_weblink);
+      window.open(local || fallback_weblink, "_blank", "noopener,noreferrer");
     }
   }
 
@@ -690,9 +930,7 @@ export default function TaskPaneView() {
         <h2 style={{ marginTop: 0, marginBottom: 6 }}>Outlook Privacy Assistant</h2>
         <div style={{ fontSize: 12, opacity: 0.85 }}>
           <strong>Status:</strong> {status} {busy ? `— ${busy}` : ""}
-          {token_ok && user_label ? (
-            <span> — <strong>Signed in:</strong> {user_label}</span>
-          ) : null}
+          {token_ok && user_label ? <span> — <strong>Signed in:</strong> {user_label}</span> : null}
         </div>
 
         {token_ok ? (
@@ -773,19 +1011,13 @@ export default function TaskPaneView() {
             <div
               style={{
                 height: 8,
-                width: run_total
-                  ? `${Math.min(100, Math.round((doneNow / Math.max(1, run_total)) * 100))}%`
-                  : "25%",
+                width: run_total ? `${Math.min(100, Math.round((doneNow / Math.max(1, run_total)) * 100))}%` : "25%",
                 background: "#bbb"
               }}
             />
           </div>
           <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
-            {run_total ? (
-              <span>Processed {doneNow} / {run_total} emails</span>
-            ) : (
-              <span>Processed {doneNow} emails</span>
-            )}
+            {run_total ? <span>Processed {doneNow} / {run_total} emails</span> : <span>Processed {doneNow} emails</span>}
           </div>
         </div>
 
@@ -802,7 +1034,7 @@ export default function TaskPaneView() {
       <div style={{ border: "2px solid #c00", padding: 12, background: "#fff5f5", marginTop: 10 }}>
         <strong>Cancel indexing now?</strong>
         <div style={{ fontSize: 12, marginTop: 6 }}>
-          Some emails may already be indexed.
+          Indexing is paused. Some emails may already be indexed.
         </div>
         <div style={{ marginTop: 10 }}>
           <button onClick={cancel_continue}>Continue indexing</button>{" "}
@@ -814,12 +1046,57 @@ export default function TaskPaneView() {
 
   function render_clear_modal() {
     if (!clear_modal_open) return null;
+
+    const hasIngestions = ingestions.length > 0;
+
     return (
       <div style={{ border: "2px solid #c00", padding: 12, background: "#fff5f5", marginTop: 10 }}>
         <strong>Clear local index?</strong>
-        <ul style={{ marginTop: 8, fontSize: 12 }}>
+
+        <div style={{ marginTop: 10, fontSize: 12 }}>
+          <label style={{ display: "block", marginBottom: 6 }}>
+            <input
+              type="radio"
+              name="clearMode"
+              checked={selected_clear_mode === "ALL"}
+              onChange={() => setSelectedClearMode("ALL")}
+            />{" "}
+            Clear entire index (all ingestions)
+          </label>
+
+          <label style={{ display: "block", marginBottom: 6, opacity: hasIngestions ? 1 : 0.5 }}>
+            <input
+              type="radio"
+              name="clearMode"
+              checked={selected_clear_mode === "ONE"}
+              disabled={!hasIngestions}
+              onChange={() => setSelectedClearMode("ONE")}
+            />{" "}
+            Clear a specific ingestion run
+          </label>
+
+          {selected_clear_mode === "ONE" ? (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 12, opacity: 0.85, marginBottom: 4 }}>Select ingestion</div>
+              <select
+                style={{ width: "100%" }}
+                value={selected_ingestion_id_to_clear}
+                onChange={(e) => setSelectedIngestionIdToClear(e.target.value)}
+                disabled={!hasIngestions}
+              >
+                {ingestions.map((ing) => (
+                  <option key={ing.ingestion_id} value={ing.ingestion_id}>
+                    {ing.created_at} — {ing.label} — {ing.email_count} emails
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+        </div>
+
+        <ul style={{ marginTop: 10, fontSize: 12 }}>
           <li>Deletes locally stored indexed email text</li>
-          <li>Deletes local search index</li>
+          <li>Deletes local search index entries for the selected scope</li>
           <li>Cannot be undone</li>
         </ul>
 
@@ -834,7 +1111,7 @@ export default function TaskPaneView() {
 
         <div style={{ marginTop: 10 }}>
           <button disabled={!clear_confirm_checked} onClick={clear_index_confirmed}>
-            Clear local index
+            Clear
           </button>{" "}
           <button onClick={() => { setClearModalOpen(false); setClearConfirmChecked(false); }}>
             Cancel
@@ -844,36 +1121,27 @@ export default function TaskPaneView() {
     );
   }
 
-  // --- Index management render sections ---
   function render_index_select_scope() {
     return (
       <div>
         {index_empty ? (
           <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5", marginBottom: 10 }}>
             <strong>No emails indexed yet</strong>
-            <div style={{ fontSize: 12, marginTop: 6 }}>
-              Select folders or individual emails to index locally.
-            </div>
+            <div style={{ fontSize: 12, marginTop: 6 }}>Select folders or individual emails to index locally.</div>
           </div>
-        ) : null}
-
-        {!index_empty ? (
+        ) : (
           <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa", marginBottom: 10 }}>
             <div style={{ fontSize: 12 }}>
               <strong>Indexed:</strong> {index_status?.indexed_count ?? 0} emails — <strong>Last updated:</strong> {fmt_dt(index_status?.last_updated)}
             </div>
           </div>
-        ) : null}
+        )}
 
         <h3 style={{ marginTop: 0 }}>Index management</h3>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-          <button onClick={() => setIngestMode("FOLDERS")} disabled={ingest_mode === "FOLDERS"}>
-            Select folders
-          </button>
-          <button onClick={() => setIngestMode("EMAILS")} disabled={ingest_mode === "EMAILS"}>
-            Select emails
-          </button>
+          <button onClick={() => setIngestMode("FOLDERS")} disabled={ingest_mode === "FOLDERS"}>Select folders</button>
+          <button onClick={() => setIngestMode("EMAILS")} disabled={ingest_mode === "EMAILS"}>Select emails</button>
         </div>
 
         {ingest_mode === "FOLDERS" ? (
@@ -913,9 +1181,7 @@ export default function TaskPaneView() {
                   </label>
                 );
               })}
-              {!filtered_folders.length ? (
-                <div style={{ fontSize: 12, opacity: 0.8, padding: 6 }}>No folders match your filter.</div>
-              ) : null}
+              {!filtered_folders.length ? <div style={{ fontSize: 12, opacity: 0.8, padding: 6 }}>No folders match your filter.</div> : null}
             </div>
           </div>
         ) : (
@@ -948,15 +1214,9 @@ export default function TaskPaneView() {
             />
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-              <button disabled={!filtered_messages.length} onClick={select_all_filtered_emails}>
-                Select all (filtered)
-              </button>
-              <button disabled={!selected_email_ids.size} onClick={clear_email_selection}>
-                Clear selection
-              </button>
-              <button disabled={!messages_next_link} onClick={load_more_messages}>
-                Load more
-              </button>
+              <button disabled={!filtered_messages.length} onClick={select_all_filtered_emails}>Select all (filtered)</button>
+              <button disabled={!selected_email_ids.size} onClick={clear_email_selection}>Clear selection</button>
+              <button disabled={!messages_next_link} onClick={load_more_messages}>Load more</button>
             </div>
 
             <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid #ddd", padding: 6 }}>
@@ -985,9 +1245,7 @@ export default function TaskPaneView() {
         )}
 
         <div style={{ border: "1px solid #eee", padding: 10, marginTop: 10 }}>
-          <div style={{ fontSize: 12 }}>
-            <strong>Selection summary</strong>
-          </div>
+          <div style={{ fontSize: 12 }}><strong>Selection summary</strong></div>
           <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
             Folders selected: {selected_folder_ids.size} — Emails selected: {selected_email_ids.size}
           </div>
@@ -1002,19 +1260,17 @@ export default function TaskPaneView() {
         </div>
 
         <div style={{ marginTop: 10 }}>
-          <button disabled={!can_continue_from_select()} onClick={go_preview}>
-            Continue
-          </button>
+          <button disabled={!can_continue_from_select()} onClick={go_preview}>Continue</button>
         </div>
 
         <hr />
 
         <h3>Clear local index</h3>
         <div style={{ fontSize: 12, opacity: 0.8 }}>
-          Clears locally stored indexed emails and the local search index.
+          Clear the full index or clear a specific ingestion run.
         </div>
-        <button style={{ marginTop: 8 }} disabled={!token_ok} onClick={() => setClearModalOpen(true)}>
-          Clear local index
+        <button style={{ marginTop: 8 }} disabled={!token_ok} onClick={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}>
+          Clear…
         </button>
 
         {render_clear_modal()}
@@ -1028,9 +1284,7 @@ export default function TaskPaneView() {
         <h3 style={{ marginTop: 0 }}>Consent and confirmation</h3>
 
         <div style={{ border: "1px solid #ddd", padding: 10, background: "#fafafa" }}>
-          <div style={{ fontSize: 12 }}>
-            <strong>Summary</strong>
-          </div>
+          <div style={{ fontSize: 12 }}><strong>Summary</strong></div>
           <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
             Mode: {ingest_mode === "FOLDERS" ? "Folders" : "Emails"}
           </div>
@@ -1038,9 +1292,7 @@ export default function TaskPaneView() {
             Total to index (approx): {selection_summary.effectiveTotal}
           </div>
           {ingest_mode === "FOLDERS" ? (
-            <div style={{ fontSize: 12, opacity: 0.85 }}>
-              Per-folder limit: {folder_limit}
-            </div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>Per-folder limit: {folder_limit}</div>
           ) : null}
         </div>
 
@@ -1051,11 +1303,7 @@ export default function TaskPaneView() {
               Large selections take longer to process and may impact responsiveness.
             </div>
             <label style={{ display: "block", fontSize: 12, marginTop: 8 }}>
-              <input
-                type="checkbox"
-                checked={large_ack_checked}
-                onChange={(e) => setLargeAckChecked(e.target.checked)}
-              />{" "}
+              <input type="checkbox" checked={large_ack_checked} onChange={(e) => setLargeAckChecked(e.target.checked)} />{" "}
               I understand this may take several minutes.
             </label>
           </div>
@@ -1063,26 +1311,17 @@ export default function TaskPaneView() {
 
         <div style={{ border: "1px solid #ddd", padding: 10, marginTop: 10 }}>
           <strong>Consent required</strong>
-          <p style={{ marginTop: 8, fontSize: 12 }}>
-            {privacy_text}
-          </p>
+          <p style={{ marginTop: 8, fontSize: 12 }}>{privacy_text}</p>
 
           <label style={{ display: "block", marginBottom: 8, fontSize: 12 }}>
-            <input
-              type="checkbox"
-              checked={consent_checked}
-              onChange={(e) => setConsentChecked(e.target.checked)}
-            />{" "}
+            <input type="checkbox" checked={consent_checked} onChange={(e) => setConsentChecked(e.target.checked)} />{" "}
             I consent to local storage and indexing.
           </label>
         </div>
 
         <div style={{ marginTop: 10 }}>
           <button onClick={back_to_select}>Back</button>{" "}
-          <button
-            disabled={!consent_checked || (selection_summary.large && !large_ack_checked)}
-            onClick={run_ingestion}
-          >
+          <button disabled={!consent_checked || (selection_summary.large && !large_ack_checked)} onClick={run_ingestion}>
             Start indexing
           </button>
         </div>
@@ -1107,20 +1346,14 @@ export default function TaskPaneView() {
       <div>
         <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5" }}>
           <strong>Indexing cancelled</strong>
-          <div style={{ fontSize: 12, marginTop: 6 }}>
-            {cancel_summary || "Indexing cancelled. Some items may already be indexed."}
-          </div>
+          <div style={{ fontSize: 12, marginTop: 6 }}>{cancel_summary || "Indexing cancelled. Some items may already be indexed."}</div>
         </div>
 
         <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => setClearModalOpen(true)}>Clear local index</button>
-          <button
-            onClick={() => {
-              setCancelSummary("");
-              cancel_requested_ref.current = false;
-              setIngestStep("SELECT");
-            }}
-          >
+          <button onClick={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}>
+            Clear…
+          </button>
+          <button onClick={() => { setCancelSummary(""); cancel_requested_ref.current = false; setIngestStep("SELECT"); }}>
             Return to selection
           </button>
         </div>
@@ -1135,9 +1368,7 @@ export default function TaskPaneView() {
       <div>
         <div style={{ border: "1px solid #0a0", padding: 10, background: "#f5fff5" }}>
           <strong>Indexing complete</strong>
-          <div style={{ fontSize: 12, marginTop: 6 }}>
-            {complete_summary || "Indexing completed successfully."}
-          </div>
+          <div style={{ fontSize: 12, marginTop: 6 }}>{complete_summary || "Indexing completed successfully."}</div>
         </div>
 
         <div style={{ marginTop: 10 }}>
@@ -1165,15 +1396,11 @@ export default function TaskPaneView() {
       <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 10, background: "#fafafa" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <strong>Index management</strong>
-          <button onClick={() => setIndexPanelOpen((v) => !v)}>
-            {index_panel_open ? "Hide" : "Show"}
-          </button>
+          <button onClick={() => setIndexPanelOpen((v) => !v)}>{index_panel_open ? "Hide" : "Show"}</button>
         </div>
 
         {index_panel_open ? (
-          <div style={{ marginTop: 10 }}>
-            {body}
-          </div>
+          <div style={{ marginTop: 10 }}>{body}</div>
         ) : (
           <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>
             Indexed: {index_status?.indexed_count ?? 0} — Last updated: {fmt_dt(index_status?.last_updated)}
@@ -1183,7 +1410,70 @@ export default function TaskPaneView() {
     );
   }
 
-  // ---------- chat screen ----------
+  // ---------------- Phase 4: Chat UI ----------------
+  function render_chat_transcript() {
+    if (!chat_msgs.length) {
+      return (
+        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 8 }}>
+          {chat_expired_note ? "Previous chat expired after 1 hour." : "No messages in this session yet."}
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ marginTop: 10 }}>
+        {chat_state === "RESTORED" ? (
+          <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 8 }}>
+            Restored chat from the last hour.
+          </div>
+        ) : null}
+
+        {chat_msgs.map((m) => (
+          <div key={m.id} style={{ marginBottom: 10 }}>
+            <div
+              style={{
+                border: "1px solid #ddd",
+                background: m.role === "user" ? "#f7f7ff" : "#fff",
+                padding: 10,
+                borderRadius: 6
+              }}
+            >
+              <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 6 }}>
+                <strong>{m.role === "user" ? "You" : "Assistant"}</strong>
+              </div>
+              <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{m.text}</div>
+            </div>
+
+            {m.role === "assistant" && m.sources && m.sources.length ? (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                  <strong>Sources</strong>
+                </div>
+                {m.sources.map((s, idx) => (
+                  <div key={`${m.id}_${s.message_id}_${idx}`} style={{ border: "1px solid #eee", padding: 8, marginBottom: 8 }}>
+                    <div>
+                      <strong>{s.subject || "(no subject)"}</strong>
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>
+                      {s.sender} — {s.received_dt} {typeof s.score === "number" ? `— score: ${s.score.toFixed(4)}` : ""}
+                    </div>
+                    <details style={{ marginTop: 6 }}>
+                      <summary style={{ cursor: "pointer", fontSize: 12 }}>Show excerpt</summary>
+                      <div style={{ fontSize: 12, marginTop: 6 }}>{s.snippet}</div>
+                    </details>
+                    <button style={{ marginTop: 6 }} onClick={() => open_email(s.message_id, s.weblink)}>
+                      Open email
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   function render_chat() {
     const no_index = (index_status?.indexed_count || 0) <= 0;
 
@@ -1192,13 +1482,9 @@ export default function TaskPaneView() {
         <div>
           <div style={{ border: "1px solid #c00", padding: 10, background: "#fff5f5" }}>
             <strong>No emails indexed</strong>
-            <div style={{ fontSize: 12, marginTop: 6 }}>
-              Index emails first using Index management.
-            </div>
+            <div style={{ fontSize: 12, marginTop: 6 }}>Index emails first using Index management.</div>
           </div>
-          <div style={{ marginTop: 10 }}>
-            {render_index_management(false)}
-          </div>
+          <div style={{ marginTop: 10 }}>{render_index_management(false)}</div>
         </div>
       );
     }
@@ -1214,54 +1500,35 @@ export default function TaskPaneView() {
           Ask questions about your indexed emails.
         </div>
 
-        <textarea
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          rows={3}
-          style={{ width: "100%", marginTop: 8 }}
-          placeholder="Ask a question about your indexed emails..."
-        />
+        {render_chat_transcript()}
 
-        <div style={{ marginTop: 8 }}>
-          <button onClick={() => run_query()} disabled={!token_ok}>
-            ask
-          </button>
+        <div style={{ marginTop: 12 }}>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={3}
+            style={{ width: "100%" }}
+            placeholder="Type your message..."
+            disabled={sending}
+          />
+          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => send_chat()} disabled={!token_ok || sending || !draft.trim()}>
+              Send
+            </button>
+            <button
+              onClick={() => {
+                clear_chat_storage();
+                setChatMsgs([]);
+                setChatState("EMPTY");
+                setChatExpiredNote(false);
+              }}
+              disabled={sending}
+              title="Clears local chat history for this session"
+            >
+              Clear chat
+            </button>
+          </div>
         </div>
-
-        <h3 style={{ marginTop: 14 }}>Answer</h3>
-        <div style={{ whiteSpace: "pre-wrap", border: "1px solid #ddd", padding: 8, minHeight: 70 }}>
-          {answer || "No answer yet."}
-        </div>
-
-        <h3 style={{ marginTop: 14 }}>Sources</h3>
-        {sources.length ? (
-          sources.map((s, idx) => (
-            <div key={s.message_id} style={{ border: "1px solid #eee", padding: 8, marginBottom: 8 }}>
-              <div>
-                <strong>[{idx + 1}] {s.subject || "(no subject)"}</strong>
-              </div>
-              <div style={{ fontSize: 12, opacity: 0.8 }}>
-                {s.sender} — {s.received_dt} {typeof s.score === "number" ? `— score: ${s.score.toFixed(4)}` : ""}
-              </div>
-              <details style={{ marginTop: 6 }}>
-                <summary style={{ cursor: "pointer", fontSize: 12 }}>Show excerpt</summary>
-                <div style={{ fontSize: 12, marginTop: 6 }}>{s.snippet}</div>
-              </details>
-
-              <button
-                style={{ marginTop: 6 }}
-                onClick={() => {
-                  const local = try_convert_to_outlook_desktop_url(s.weblink);
-                  window.open(local || s.weblink, "_blank", "noopener,noreferrer");
-                }}
-              >
-                Open email
-              </button>
-            </div>
-          ))
-        ) : (
-          <div style={{ fontSize: 12, opacity: 0.8 }}>No sources yet.</div>
-        )}
       </div>
     );
   }

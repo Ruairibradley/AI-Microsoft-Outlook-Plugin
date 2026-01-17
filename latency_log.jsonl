@@ -53,3 +53,10 @@
 {"event": "ingest", "sqlite_upsert_ms": 6.183299992699176, "sqlite_fetch_ms": 0.3038999857380986, "embedding_ms": 46.890700003132224, "chroma_write_ms": 17.076499992981553, "ingested_count": 5, "timestamp": "2026-01-17T15:05:05"}
 {"event": "search", "embedding_query_ms": 9.620700002415106, "vector_search_ms": 34.48100000969134, "query": "whatt new apps have access to my data", "timestamp": "2026-01-17T15:05:42"}
 {"event": "llm", "llm_inference_ms": 30319.443200016394, "avg_cpu_percent": 56.8, "peak_cpu_percent": 85.1, "peak_mem_mb": 497.3, "model": "qwen2.5:3b", "timestamp": "2026-01-17T15:06:12"}
+{"event": "ingest", "sqlite_upsert_ms": 5.011599976569414, "embedding_ms": 2618.219099997077, "chroma_upsert_ms": 69.37569999718107, "ingested_count": 5, "ingestion_id": "16980146-e9fb-439e-8c3a-e82b5339d013", "timestamp": "2026-01-17T15:20:10"}
+{"event": "ingest", "sqlite_upsert_ms": 5.873699992662296, "embedding_ms": 47.91970000951551, "chroma_upsert_ms": 16.997900005662814, "ingested_count": 5, "ingestion_id": "476f3331-8db6-443d-b41f-5d79b5e0b9fc", "timestamp": "2026-01-17T15:20:24"}
+{"event": "search", "embedding_query_ms": 10.227699996903539, "vector_search_ms": 40.967300010379404, "query": "what do i need to do for f34r rosa xbox account as per emails?", "timestamp": "2026-01-17T15:21:31"}
+{"event": "llm", "llm_inference_ms": 29415.07190000266, "avg_cpu_percent": 53.3, "peak_cpu_percent": 88.1, "peak_mem_mb": 497.1, "model": "qwen2.5:3b", "timestamp": "2026-01-17T15:22:00"}
+{"event": "ingest", "sqlite_upsert_ms": 4.843500006245449, "embedding_ms": 21.904599998379126, "chroma_upsert_ms": 56.0399999958463, "ingested_count": 1, "ingestion_id": "c3756645-1f39-4fa5-bc7a-f9affe339710", "timestamp": "2026-01-17T15:24:52"}
+{"event": "search", "embedding_query_ms": 10.378800012404099, "vector_search_ms": 43.7071000051219, "query": "how much overtime will i be paid", "timestamp": "2026-01-17T15:25:02"}
+{"event": "llm", "llm_inference_ms": 7202.056500012986, "avg_cpu_percent": 84.9, "peak_cpu_percent": 100.0, "peak_mem_mb": 400.2, "model": "qwen2.5:3b", "timestamp": "2026-01-17T15:25:10"}

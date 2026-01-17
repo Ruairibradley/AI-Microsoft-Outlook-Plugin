@@ -6,8 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .graph_client import list_folders, list_messages, get_messages_by_ids, list_messages_page
-from .email_processor import ingest_messages, search_emails, clear_index, get_index_status
+from .graph_client import list_folders, list_messages, get_messages_by_ids, list_messages_page, get_message_weblink
+from .email_processor import ingest_messages, search_emails, clear_index, get_index_status, list_ingestions, clear_ingestion
 from .ollama_client import generate
 
 app = FastAPI(title="Outlook Local-Privacy Assistant Backend")
@@ -32,6 +32,9 @@ def _require_token(authorization: Optional[str]) -> str:
 class IngestRequest(BaseModel):
     folder_id: Optional[str] = None
     message_ids: List[str]
+    ingestion_id: Optional[str] = None
+    ingestion_label: Optional[str] = None
+    ingest_mode: Optional[str] = None
 
 
 class QueryRequest(BaseModel):
@@ -43,6 +46,10 @@ class ClearRequest(BaseModel):
     pass
 
 
+class ClearIngestionRequest(BaseModel):
+    ingestion_id: str
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -51,6 +58,18 @@ def health():
 @app.get("/index/status")
 def index_status():
     return get_index_status()
+
+
+@app.get("/index/ingestions")
+def index_ingestions(limit: int = 50):
+    return list_ingestions(limit=limit)
+
+
+@app.post("/index/clear_ingestion")
+def index_clear_ingestion(req: ClearIngestionRequest):
+    if not req.ingestion_id:
+        raise HTTPException(status_code=400, detail="ingestion_id is required")
+    return clear_ingestion(req.ingestion_id)
 
 
 @app.get("/graph/folders")
@@ -79,6 +98,18 @@ def graph_messages_page(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/graph/message_link")
+def graph_message_link(message_id: str, Authorization: Optional[str] = Header(default=None)):
+    token = _require_token(Authorization)
+    if not message_id:
+        raise HTTPException(status_code=400, detail="message_id is required")
+    try:
+        link = get_message_weblink(token, message_id)
+        return {"message_id": message_id, "weblink": link}
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @app.post("/ingest")
 def ingest(req: IngestRequest, Authorization: Optional[str] = Header(default=None)):
     token = _require_token(Authorization)
@@ -86,7 +117,15 @@ def ingest(req: IngestRequest, Authorization: Optional[str] = Header(default=Non
         raise HTTPException(status_code=400, detail="message_ids is required")
 
     messages = get_messages_by_ids(token, req.message_ids)
-    timings = ingest_messages(messages, folder_id=req.folder_id, log_timings=True)
+
+    timings = ingest_messages(
+        messages,
+        folder_id=req.folder_id,
+        ingestion_id=req.ingestion_id,
+        ingestion_label=req.ingestion_label,
+        ingest_mode=req.ingest_mode,
+        log_timings=True
+    )
     return {"ok": True, "timings": timings}
 
 

@@ -33,8 +33,28 @@ export type IndexStatus = {
   timestamp: string;
 };
 
+export type IngestionInfo = {
+  ingestion_id: string;
+  created_at: string;
+  label: string;
+  mode: string;
+  email_count: number;
+};
+
 export function get_index_status() {
   return backend_fetch("/index/status", null);
+}
+
+export function list_ingestions(accessToken: string | null, limit: number = 50) {
+  // No auth required for this local endpoint, but we accept token for consistency.
+  return backend_fetch(`/index/ingestions?limit=${encodeURIComponent(String(limit))}`, accessToken);
+}
+
+export function clear_ingestion(accessToken: string | null, ingestion_id: string) {
+  return backend_fetch("/index/clear_ingestion", accessToken, {
+    method: "POST",
+    body: JSON.stringify({ ingestion_id })
+  });
 }
 
 // ---------- graph ----------
@@ -60,13 +80,26 @@ export function get_messages_page(accessToken: string, args: { folder_id?: strin
   return backend_fetch(`/graph/messages_page?${params.toString()}`, accessToken);
 }
 
+export function get_message_link(accessToken: string, message_id: string) {
+  const q = new URLSearchParams({ message_id }).toString();
+  return backend_fetch(`/graph/message_link?${q}`, accessToken);
+}
+
 // ---------- ingest / query ----------
-export function ingest_messages(accessToken: string, folder_id: string, message_ids: string[]) {
+export function ingest_messages(
+  accessToken: string,
+  folder_id: string,
+  message_ids: string[],
+  opts?: { ingestion_id?: string; ingestion_label?: string; ingest_mode?: string }
+) {
   return backend_fetch("/ingest", accessToken, {
     method: "POST",
     body: JSON.stringify({
       folder_id,
-      message_ids
+      message_ids,
+      ingestion_id: opts?.ingestion_id,
+      ingestion_label: opts?.ingestion_label,
+      ingest_mode: opts?.ingest_mode
     })
   });
 }
