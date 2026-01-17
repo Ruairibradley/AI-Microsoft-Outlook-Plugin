@@ -1,16 +1,22 @@
 const configuredBase = (import.meta.env.VITE_BACKEND_URL as string) || "";
 const backendBase = configuredBase.replace(/\/+$/, "");
 
-async function backend_fetch(path: string, accessToken: string, options: RequestInit = {}) {
+async function backend_fetch(path: string, accessToken: string | null, options: RequestInit = {}) {
   const url = `${backendBase}${path}`;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options.headers as any || {})
+  };
+
+  // Some endpoints do not require auth; most do.
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
 
   const res = await fetch(url, {
     ...options,
-    headers: {
-      ...(options.headers || {}),
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json"
-    }
+    headers
   });
 
   if (!res.ok) {
@@ -21,6 +27,19 @@ async function backend_fetch(path: string, accessToken: string, options: Request
   return res.json();
 }
 
+// ---------- index ----------
+export type IndexStatus = {
+  indexed_count: number;
+  last_updated: string | null;
+  timestamp: string;
+};
+
+export function get_index_status() {
+  // index status is local-only; no auth required
+  return backend_fetch("/index/status", null);
+}
+
+// ---------- graph ----------
 export function get_folders(accessToken: string) {
   return backend_fetch("/graph/folders", accessToken);
 }
@@ -30,6 +49,7 @@ export function get_messages(accessToken: string, folder_id: string, top: number
   return backend_fetch(`/graph/messages?${q}`, accessToken);
 }
 
+// ---------- ingest / query ----------
 export function ingest_messages(accessToken: string, folder_id: string, message_ids: string[]) {
   return backend_fetch("/ingest", accessToken, {
     method: "POST",

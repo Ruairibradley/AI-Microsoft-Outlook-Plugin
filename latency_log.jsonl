@@ -39,3 +39,6 @@
 {"event": "ingest", "sqlite_upsert_ms": 5.254200019408017, "sqlite_fetch_ms": 0.33179999445565045, "embedding_ms": 23.719499993603677, "chroma_write_ms": 16.792100010206923, "ingested_count": 2, "timestamp": "2026-01-17T13:34:26"}
 {"event": "search", "embedding_query_ms": 10.630800010403618, "vector_search_ms": 41.86590001336299, "query": "what does my outlook email offer me", "timestamp": "2026-01-17T13:34:51"}
 {"event": "llm", "llm_inference_ms": 23253.365900018252, "avg_cpu_percent": 72.1, "peak_cpu_percent": 100.0, "peak_mem_mb": 483.6, "model": "qwen2.5:3b", "timestamp": "2026-01-17T13:35:14"}
+{"event": "ingest", "sqlite_upsert_ms": 5.769200011854991, "sqlite_fetch_ms": 0.2560000284574926, "embedding_ms": 2448.1391000153963, "chroma_write_ms": 69.72299999324605, "ingested_count": 1, "timestamp": "2026-01-17T13:48:28"}
+{"event": "search", "embedding_query_ms": 11.585300002479926, "vector_search_ms": 38.894500001333654, "query": "tell me what my email said", "timestamp": "2026-01-17T13:49:00"}
+{"event": "llm", "llm_inference_ms": 14816.374899994116, "avg_cpu_percent": 63.3, "peak_cpu_percent": 93.5, "peak_mem_mb": 476.5, "model": "qwen2.5:3b", "timestamp": "2026-01-17T13:49:15"}
