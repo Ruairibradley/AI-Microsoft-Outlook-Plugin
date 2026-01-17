@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import "./taskpane.css";
+import "./taskpaneview.css";
 import { sign_in_interactive, try_get_access_token_silent, get_signed_in_user, sign_out } from "../auth/token";
 import {
   ask_question,
