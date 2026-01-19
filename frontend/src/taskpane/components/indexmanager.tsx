@@ -22,15 +22,12 @@ export function IndexManager(props: {
   folders: Folder[];
   index_status: IndexStatus | null;
   onIndexChanged: () => Promise<void>;
-  collapsible?: boolean;
+  onNavigate?: (to: "CHAT" | "INDEX") => void;
 }) {
-  const collapsible = !!props.collapsible;
-  const [panel_open, setPanelOpen] = useState<boolean>(!collapsible);
-
   const [busy, setBusy] = useState<string>("");
   const [err, setErr] = useState<string>("");
 
-  // ---------- ingestion wizard state ----------
+  // ---------- wizard state ----------
   const [ingest_step, setIngestStep] = useState<IngestStep>("SELECT");
   const [ingest_mode, setIngestMode] = useState<IngestMode>("FOLDERS");
 
@@ -131,7 +128,6 @@ export function IndexManager(props: {
     return selected_email_ids.size > 0;
   }
 
-  // ---------- selection actions ----------
   function toggle_folder(id: string) {
     setSelectedFolderIds((prev) => {
       const next = new Set(prev);
@@ -160,7 +156,6 @@ export function IndexManager(props: {
     });
   }
 
-  // ---------- load emails for EMAIL picker ----------
   async function load_email_folder(folderId: string) {
     setEmailFolderId(folderId);
     setMessages([]);
@@ -202,7 +197,6 @@ export function IndexManager(props: {
     }
   }
 
-  // ---------- wizard transitions ----------
   function go_preview() {
     setErr("");
     setCancelSummary("");
@@ -217,7 +211,6 @@ export function IndexManager(props: {
     setIngestStep("SELECT");
   }
 
-  // ---------- cancel pause gate ----------
   function cancel_clicked() {
     pause_requested_ref.current = true;
     setCancelConfirmOpen(true);
@@ -242,7 +235,6 @@ export function IndexManager(props: {
     setIngestStep("CANCELLED");
   }
 
-  // ---------- ingestion ----------
   async function start_indexing() {
     if (!props.token_ok || !props.access_token) return;
     if (!consent_checked) return;
@@ -314,7 +306,6 @@ export function IndexManager(props: {
     }
   }
 
-  // ---------- clear handling ----------
   async function clear_confirmed(args: { mode: "ALL" | "ONE"; ingestion_id?: string }) {
     if (!props.token_ok || !props.access_token) return;
     setBusy("Clearing…");
@@ -339,7 +330,6 @@ export function IndexManager(props: {
     }
   }
 
-  // ---------- UI ----------
   function render_indexed_panel() {
     if (index_empty) {
       return (
@@ -469,7 +459,7 @@ export function IndexManager(props: {
     );
   }
 
-  const body = (
+  return (
     <div className="op-fit">
       {ingest_step === "SELECT" && render_select_step()}
 
@@ -528,41 +518,32 @@ export function IndexManager(props: {
       )}
 
       {ingest_step === "COMPLETE" && (
-        <IngestResult
-          kind="COMPLETE"
-          summary={
-            (complete_summary || "Indexing completed successfully.") +
-            (props.index_status?.last_updated ? ` • Updated: ${fmt_dt(props.index_status.last_updated)}` : "")
-          }
-          onOpenClear={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}
-          onReturnToSelect={() => setIngestStep("SELECT")}
-          onIndexMore={() => setIngestStep("SELECT")}
-        />
-      )}
-    </div>
-  );
+        <div className="op-fit">
+          <IngestResult
+            kind="COMPLETE"
+            summary={
+              (complete_summary || "Indexing completed successfully.") +
+              (props.index_status?.last_updated ? ` • Updated: ${fmt_dt(props.index_status.last_updated)}` : "")
+            }
+            onOpenClear={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}
+            onReturnToSelect={() => setIngestStep("SELECT")}
+            onIndexMore={() => setIngestStep("SELECT")}
+          />
 
-  if (!collapsible) return body;
+          <div className="op-spacer" />
 
-  return (
-    <div className="op-card">
-      <div className="op-cardHeader">
-        <div>
-          <div className="op-cardTitle">Index management</div>
-          <div className="op-muted">Index more emails or clear local data.</div>
-        </div>
-        <button className="op-btn" onClick={() => setPanelOpen((v) => !v)}>
-          {panel_open ? "Hide" : "Show"}
-        </button>
-      </div>
-
-      {panel_open ? (
-        <div className="op-cardBody">{body}</div>
-      ) : (
-        <div className="op-cardBody">
-          <div className="op-muted">
-            Indexed <strong>{props.index_status?.indexed_count ?? 0}</strong> • Updated{" "}
-            <strong>{fmt_dt(props.index_status?.last_updated)}</strong>
+          <div className="op-row">
+            <button
+              className="op-btn op-btnPrimary"
+              onClick={() => props.onNavigate?.("CHAT")}
+              disabled={(props.index_status?.indexed_count || 0) <= 0}
+              title={(props.index_status?.indexed_count || 0) <= 0 ? "Index emails first" : "Go to chat"}
+            >
+              Go to chat
+            </button>
+            <button className="op-btn" onClick={() => setIngestStep("SELECT")}>
+              Index more
+            </button>
           </div>
         </div>
       )}

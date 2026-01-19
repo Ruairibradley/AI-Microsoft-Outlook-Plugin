@@ -5,8 +5,9 @@ import { sign_in_interactive, try_get_access_token_silent, get_signed_in_user, s
 import { get_folders, get_index_status, type IndexStatus } from "../api/backend";
 
 import { IndexManager } from "./components/indexmanager";
-import { ChatPane } from "./components/chatpane"; 
+import { ChatPane } from "./components/chatpane"; // your lowercase filename
 import { clear_chat_storage } from "./chat/storage";
+import { WelcomeSignIn } from "./components/welcomesignin";
 
 type Screen = "SIGNIN" | "CHAT" | "INDEX";
 
@@ -22,7 +23,6 @@ function fmt_dt(s: string | null | undefined) {
 }
 
 export default function TaskPaneView() {
-  // ---------- app/screen ----------
   const [screen, setScreen] = useState<Screen>("SIGNIN");
 
   const [status, setStatus] = useState("Starting…");
@@ -53,13 +53,15 @@ export default function TaskPaneView() {
 
     const exists = (st?.indexed_count || 0) > 0;
 
+    // Deterministic routing: if no index, force Index screen
     if (!exists) {
       setScreen("INDEX");
       return;
     }
 
+    // If we have an index, default to chat unless caller asks otherwise
     if (nextPreferredScreen) setScreen(nextPreferredScreen);
-    else if (screen === "SIGNIN") setScreen("CHAT");
+    else if (screen === "SIGNIN" || screen === "INDEX") setScreen("CHAT");
   }
 
   async function refresh_folders(token: string) {
@@ -67,11 +69,9 @@ export default function TaskPaneView() {
     setFolders((data.folders || []) as Folder[]);
   }
 
-  // Called by IndexManager after ingest/clear operations
   async function on_index_changed() {
-    // Re-load index status and keep routing deterministic
-    await refresh_index_status(screen === "SIGNIN" ? "CHAT" : null);
-    // Also refresh ingestion list inside IndexManager itself (it does that on open), so no need here.
+    // After indexing/clearing, re-check index and route correctly
+    await refresh_index_status(null);
   }
 
   // ---------- startup ----------
@@ -163,14 +163,12 @@ export default function TaskPaneView() {
     try {
       await sign_out();
 
-      // Reset all local state
       setTokenOk(false);
       setAccessToken("");
       setUserLabel("");
       setIndexStatus(null);
       setFolders([]);
 
-      // Prevent cross-account chat restoration confusion
       clear_chat_storage();
 
       setScreen("SIGNIN");
@@ -212,7 +210,11 @@ export default function TaskPaneView() {
           <span><strong>Status:</strong> {status}</span>
           {busy ? <span>• {busy}</span> : null}
           {token_ok && user_label ? <span>• <strong>Signed in:</strong> {user_label}</span> : null}
-          {token_ok && index_status ? <span>• <strong>Indexed:</strong> {index_status.indexed_count} • <strong>Updated:</strong> {fmt_dt(index_status.last_updated)}</span> : null}
+          {token_ok && index_status ? (
+            <span>
+              • <strong>Indexed:</strong> {index_status.indexed_count} • <strong>Updated:</strong> {fmt_dt(index_status.last_updated)}
+            </span>
+          ) : null}
         </div>
 
         {token_ok ? (
@@ -221,7 +223,7 @@ export default function TaskPaneView() {
               Chat
             </button>
             <button className="op-btn op-btnGhost" onClick={() => setScreen("INDEX")}>
-              Index
+              Index management
             </button>
             <button className="op-btn op-btnDanger" onClick={() => sign_out_clicked()}>
               Sign out
@@ -229,29 +231,19 @@ export default function TaskPaneView() {
           </div>
         ) : null}
 
-        {render_error()}
+        {/* Avoid duplicate error blocks on the welcome screen */}
+        {screen !== "SIGNIN" ? render_error() : null}
       </div>
     );
   }
 
   function render_signin() {
     return (
-      <div className="op-card op-fit">
-        <div className="op-cardHeader">
-          <div>
-            <div className="op-cardTitle">Sign in</div>
-            <div className="op-muted">Sign in to fetch emails with Microsoft Graph and index locally.</div>
-          </div>
-        </div>
-        <div className="op-cardBody">
-          <button className="op-btn op-btnPrimary" onClick={() => sign_in_clicked()}>
-            Sign in
-          </button>
-          <div className="op-helpNote">
-            Tip: If email links fail in your browser, ensure you’re signed into the same mailbox in Outlook on the web.
-          </div>
-        </div>
-      </div>
+      <WelcomeSignIn
+        onSignIn={() => sign_in_clicked()}
+        error={error}
+        error_details={error_details}
+      />
     );
   }
 
@@ -263,50 +255,29 @@ export default function TaskPaneView() {
         folders={folders}
         index_status={index_status}
         onIndexChanged={on_index_changed}
-        collapsible={false}
+        onNavigate={(to) => setScreen(to)}
       />
     );
   }
 
   function render_chat_screen() {
     if (!index_exists) {
-      // Deterministic: if index is empty, force index screen
-      return (
-        <div className="op-fit">
-          <div className="op-banner op-bannerStrong">
-            <div className="op-bannerTitle">Index required</div>
-            <div className="op-bannerText">Index emails first using Index management.</div>
-          </div>
-          <div className="op-spacer" />
-          {render_index_screen()}
-        </div>
-      );
+      // If user somehow navigates to Chat without index, enforce Index screen
+      return render_index_screen();
     }
 
     return (
       <div className="op-fit" style={{ height: "100%" }}>
-        <IndexManager
+        <ChatPane
           token_ok={token_ok}
           access_token={access_token}
-          folders={folders}
-          index_status={index_status}
-          onIndexChanged={on_index_changed}
-          collapsible={true}
+          index_exists={index_exists}
+          index_count={index_status?.indexed_count || 0}
         />
-        <div className="op-spacer" />
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <ChatPane
-            token_ok={token_ok}
-            access_token={access_token}
-            index_exists={index_exists}
-            index_count={index_status?.indexed_count || 0}
-          />
-        </div>
       </div>
     );
   }
 
-  // ---------- main ----------
   return (
     <div className="op-app">
       {render_header()}
