@@ -1,11 +1,39 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { list_ingestions, type IngestionInfo } from "../../api/backend";
+
+function fmt_short_dt(iso: string): string {
+  // Input likely "YYYY-MM-DDTHH:MM:SS"
+  // Output "DD/MM HH:MM"
+  try {
+    const [datePart, timePartRaw] = iso.split("T");
+    const [yyyy, mm, dd] = datePart.split("-");
+    const hhmm = (timePartRaw || "").slice(0, 5);
+    if (!dd || !mm) return iso;
+    return `${dd}/${mm} ${hhmm}`;
+  } catch {
+    return iso;
+  }
+}
+
+function normalize_mode(mode: string): string {
+  const m = (mode || "").toUpperCase();
+  if (m === "FOLDERS") return "Folders";
+  if (m === "EMAILS") return "Emails";
+  if (m) return m[0] + m.slice(1).toLowerCase();
+  return "Unknown";
+}
+
+function option_label(ing: IngestionInfo): string {
+  const dt = fmt_short_dt(ing.created_at || "");
+  const mode = normalize_mode(ing.mode || "");
+  const count = Number(ing.email_count || 0);
+  return `${dt} • ${mode} • +${count}`;
+}
 
 export function ClearModal(props: {
   open: boolean;
   onClose: () => void;
 
-  // When confirmed, parent decides whether to clear ALL or ONE and executes the action
   onConfirm: (args: { mode: "ALL" | "ONE"; ingestion_id?: string }) => Promise<void>;
 
   confirm_checked: boolean;
@@ -24,7 +52,6 @@ export function ClearModal(props: {
   useEffect(() => {
     if (!props.open) return;
 
-    // Load ingestion list when modal opens (best effort)
     (async () => {
       try {
         const res = await list_ingestions(null, 50);
@@ -38,13 +65,17 @@ export function ClearModal(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.open]);
 
-  if (!props.open) return null;
-
   const hasIngestions = ingestions.length > 0;
+
+  const selected_ingestion = useMemo(() => {
+    return ingestions.find((i) => i.ingestion_id === selected_ingestion_id) || null;
+  }, [ingestions, selected_ingestion_id]);
+
+  if (!props.open) return null;
 
   return (
     <div className="op-banner op-bannerDanger" style={{ marginTop: 10 }}>
-      <div className="op-bannerTitle">Clear local index</div>
+      <div className="op-bannerTitle">Clear local storage</div>
       <div className="op-bannerText">Choose what to clear. This cannot be undone.</div>
 
       {props.busy_text ? <div className="op-helpNote">{props.busy_text}</div> : null}
@@ -87,13 +118,24 @@ export function ClearModal(props: {
             value={selected_ingestion_id}
             onChange={(e) => setSelectedIngestionId(e.target.value)}
             disabled={!hasIngestions}
+            title={
+              selected_ingestion
+                ? `${selected_ingestion.created_at} | ${selected_ingestion.label} | ${selected_ingestion.mode} | ${selected_ingestion.email_count}`
+                : ""
+            }
           >
             {ingestions.map((ing) => (
-              <option key={ing.ingestion_id} value={ing.ingestion_id}>
-                {ing.created_at} — {ing.label} — {ing.email_count} emails
+              <option key={ing.ingestion_id} value={ing.ingestion_id} title={ing.label}>
+                {option_label(ing)}
               </option>
             ))}
           </select>
+
+          {selected_ingestion ? (
+            <div className="op-helpNote" style={{ marginTop: 8 }}>
+              <strong>Details:</strong> {selected_ingestion.label || "—"}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

@@ -1,4 +1,10 @@
+import { useMemo } from "react";
 import type { Folder, GraphMessage } from "../ingest/types";
+
+function truncate(s: string, n: number) {
+  if (!s) return "";
+  return s.length <= n ? s : s.slice(0, n) + "…";
+}
 
 export function EmailPicker(props: {
   token_ok: boolean;
@@ -18,7 +24,7 @@ export function EmailPicker(props: {
 
   selected_email_ids: Set<string>;
   toggle_email: (id: string) => void;
-  select_all_filtered: () => void;
+
   clear_selection: () => void;
 
   filtered_messages: GraphMessage[];
@@ -27,16 +33,31 @@ export function EmailPicker(props: {
   is_large: boolean;
   large_warning_text: string;
 }) {
+  const empty_text = useMemo(() => {
+    if (!props.email_folder_id) return "Select a folder to view emails.";
+    if (!props.filtered_messages.length) return "No emails match your filter.";
+    return "";
+  }, [props.email_folder_id, props.filtered_messages.length]);
+
   return (
-    <div className="op-card" style={{ padding: 12 }}>
-      <div className="op-row">
-        <div style={{ flex: 1, minWidth: 200 }}>
+    <div className="op-card" style={{ padding: 12, maxWidth: "100%" }}>
+      {/* Controls */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr",
+          gap: 10,
+          maxWidth: "100%"
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
           <div className="op-label">Folder</div>
           <select
             className="op-select"
             value={props.email_folder_id}
             onChange={(e) => props.on_load_folder(e.target.value)}
             disabled={!props.token_ok}
+            style={{ width: "100%" }}
           >
             <option value="">Select…</option>
             {props.folders.map((f) => (
@@ -47,66 +68,88 @@ export function EmailPicker(props: {
           </select>
         </div>
 
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <div className="op-label">Search emails</div>
+        <div style={{ minWidth: 0 }}>
+          <div className="op-label">Filter</div>
           <input
             className="op-input"
             value={props.messages_filter}
             onChange={(e) => props.set_messages_filter(e.target.value)}
-            placeholder="Filter by subject or sender…"
+            placeholder="Subject or sender…"
+            style={{ width: "100%" }}
           />
         </div>
       </div>
 
       <div className="op-spacer" />
 
-      <div className="op-row">
-        <button className="op-btn" onClick={props.select_all_filtered} disabled={!props.filtered_messages.length}>
-          Select filtered
-        </button>
-        <button className="op-btn" onClick={props.clear_selection} disabled={!props.selected_email_ids.size}>
-          Clear selection
-        </button>
-        <button className="op-btn" onClick={props.on_load_more} disabled={!props.messages_next_link}>
-          Load more
-        </button>
-        <span className="op-muted">
+      {/* Compact action row: only show what matters */}
+      <div className="op-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <div className="op-row" style={{ gap: 10 }}>
+          {props.messages_next_link ? (
+            <button className="op-linkBtn" onClick={props.on_load_more} type="button">
+              Load more
+            </button>
+          ) : (
+            <span className="op-muted" style={{ fontSize: 12 }}> </span>
+          )}
+
+          {props.selected_count > 0 ? (
+            <button className="op-linkBtn" onClick={props.clear_selection} type="button" title="Clear selected emails">
+              Clear selected
+            </button>
+          ) : null}
+        </div>
+
+        <div className="op-muted" style={{ whiteSpace: "nowrap" }}>
           Selected: <strong>{props.selected_count}</strong>
-        </span>
+        </div>
       </div>
 
       <div className="op-spacer" />
 
-      <div className="op-list">
+      {/* List */}
+      <div className="op-list" style={{ maxWidth: "100%" }}>
         <div className="op-listScroll">
-          {props.filtered_messages.length ? (
+          {empty_text ? (
+            <div className="op-item">
+              <div className="op-muted">{empty_text}</div>
+            </div>
+          ) : (
             props.filtered_messages.map((m) => {
               const from = m.from?.emailAddress?.address || "";
               const checked = props.selected_email_ids.has(m.id);
+
               return (
                 <div key={m.id} className="op-item">
                   <div className="op-itemRow">
-                    <input type="checkbox" checked={checked} onChange={() => props.toggle_email(m.id)} style={{ marginTop: 2 }} />
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => props.toggle_email(m.id)}
+                      style={{ marginTop: 2 }}
+                    />
+
                     <div className="op-itemMain">
-                      <div className="op-itemTitle">{m.subject || "(no subject)"}</div>
-                      <div className="op-itemMeta">{from} • {m.receivedDateTime || ""}</div>
-                      <div className="op-itemPreview">{(m.bodyPreview || "").slice(0, 140)}{(m.bodyPreview || "").length > 140 ? "…" : ""}</div>
+                      <div className="op-itemTitle">{truncate(m.subject || "(no subject)", 70)}</div>
+                      <div className="op-itemMeta">
+                        {truncate(from, 32)} • {truncate(m.receivedDateTime || "", 22)}
+                      </div>
+                      {/* Minimal preview, one short line */}
+                      {m.bodyPreview ? (
+                        <div className="op-itemPreview">{truncate(m.bodyPreview, 90)}</div>
+                      ) : null}
                     </div>
                   </div>
                 </div>
               );
             })
-          ) : (
-            <div className="op-item">
-              <div className="op-muted">{props.email_folder_id ? "No emails loaded or no matches." : "Select a folder to view emails."}</div>
-            </div>
           )}
         </div>
       </div>
 
       <div className="op-spacer" />
 
-      <div className="op-banner">
+      <div className="op-banner" style={{ maxWidth: "100%" }}>
         <div className="op-bannerTitle">Selection summary</div>
         <div className="op-bannerText">
           Emails selected: <strong>{props.selected_count}</strong>

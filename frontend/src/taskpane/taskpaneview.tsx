@@ -17,9 +17,22 @@ type Folder = {
   totalItemCount?: number;
 };
 
-function fmt_dt(s: string | null | undefined) {
-  if (!s) return "—";
-  return s.replace("T", " ");
+function format_dt_uk(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  // Graph/metadata is usually "YYYY-MM-DDTHH:MM:SS" (no timezone)
+  // We format as DD/MM/YYYY HH:MM to match your spec.
+  try {
+    const [datePart, timePartRaw] = iso.split("T");
+    if (!datePart) return iso;
+
+    const [yyyy, mm, dd] = datePart.split("-");
+    const timePart = (timePartRaw || "").slice(0, 5); // HH:MM
+    if (!yyyy || !mm || !dd) return iso;
+
+    return `${dd}/${mm}/${yyyy} ${timePart || ""}`.trim();
+  } catch {
+    return iso;
+  }
 }
 
 export default function TaskPaneView() {
@@ -178,17 +191,22 @@ export default function TaskPaneView() {
   }
 
   function render_header() {
-    // Header should appear only once logged in, to avoid duplicate title bar on welcome screen.
+    // Header should appear only once logged in
     if (screen === "SIGNIN") return null;
+
+    const indexedCount = index_status?.indexed_count ?? 0;
+    const lastUpdated = format_dt_uk(index_status?.last_updated);
 
     return (
       <div className="op-header">
         <div className="op-subline">
-          {token_ok && user_label ? <span><strong>Signed in:</strong> {user_label}</span> : null}
+          {token_ok && user_label ? (
+            <span><strong>Signed in:</strong> {user_label}</span>
+          ) : null}
 
-          {token_ok && index_status ? (
+          {token_ok ? (
             <span>
-              • <strong>Indexed:</strong> {index_status.indexed_count} • <strong>Updated:</strong> {fmt_dt(index_status.last_updated)}
+              • <strong>Indexed emails:</strong> {indexedCount} • <strong>Last updated:</strong> {lastUpdated}
             </span>
           ) : null}
 
@@ -201,7 +219,7 @@ export default function TaskPaneView() {
               Chat
             </button>
             <button className="op-btn op-btnGhost" onClick={() => setScreen("INDEX")}>
-              Index management
+              Emails
             </button>
             <button className="op-btn op-btnDanger" onClick={() => sign_out_clicked()}>
               Sign out

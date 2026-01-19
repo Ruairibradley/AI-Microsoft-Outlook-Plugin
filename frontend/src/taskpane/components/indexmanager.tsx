@@ -11,6 +11,8 @@ import { IngestPreview } from "./ingestpreview";
 import { IngestProgress } from "./ingestprogress";
 import { IngestResult } from "./ingestresult";
 
+type IndexView = "MAIN" | "CLEAR_STORAGE";
+
 function fmt_dt(s: string | null | undefined) {
   if (!s) return "—";
   return s.replace("T", " ");
@@ -24,6 +26,8 @@ export function IndexManager(props: {
   onIndexChanged: () => Promise<void>;
   onNavigate?: (to: "CHAT" | "INDEX") => void;
 }) {
+  const [view, setView] = useState<IndexView>("MAIN");
+
   const [busy, setBusy] = useState<string>("");
   const [err, setErr] = useState<string>("");
 
@@ -75,8 +79,7 @@ export function IndexManager(props: {
   const [cancel_summary, setCancelSummary] = useState<string>("");
   const [complete_summary, setCompleteSummary] = useState<string>("");
 
-  // clear modal
-  const [clear_modal_open, setClearModalOpen] = useState(false);
+  // clear storage sub-screen state
   const [clear_confirm_checked, setClearConfirmChecked] = useState(false);
 
   const index_empty = (props.index_status?.indexed_count || 0) <= 0;
@@ -146,14 +149,6 @@ export function IndexManager(props: {
 
   function clear_email_selection() {
     setSelectedEmailIds(new Set());
-  }
-
-  function select_all_filtered_emails() {
-    setSelectedEmailIds((prev) => {
-      const next = new Set(prev);
-      for (const m of filtered_messages) next.add(m.id);
-      return next;
-    });
   }
 
   async function load_email_folder(folderId: string) {
@@ -318,8 +313,8 @@ export function IndexManager(props: {
         await clear_ingestion(null, args.ingestion_id);
       }
 
-      setClearModalOpen(false);
       setClearConfirmChecked(false);
+      setView("MAIN");
 
       await props.onIndexChanged();
       setIngestStep("SELECT");
@@ -330,23 +325,53 @@ export function IndexManager(props: {
     }
   }
 
-  function render_indexed_panel() {
-    if (index_empty) {
-      return (
-        <div className="op-banner op-bannerStrong" style={{ marginBottom: 10 }}>
-          <div className="op-bannerTitle">No emails indexed yet</div>
-          <div className="op-bannerText">Select folders or emails to build a local index.</div>
-        </div>
-      );
-    }
-
+  // ---------- CLEAR STORAGE SUB-SCREEN ----------
+  if (view === "CLEAR_STORAGE") {
     return (
-      <div className="op-banner" style={{ marginBottom: 10 }}>
-        <div className="op-bannerTitle">Index is ready</div>
-        <div className="op-bannerText">
-          Indexed <strong>{props.index_status?.indexed_count ?? 0}</strong> emails • Updated{" "}
-          <strong>{fmt_dt(props.index_status?.last_updated)}</strong>
+      <div className="op-card op-fit">
+        <div className="op-cardHeader">
+          <div>
+            <div className="op-cardTitle">Clear storage</div>
+            <div className="op-muted">Remove local indexed email data.</div>
+          </div>
+          <button className="op-btn" onClick={() => { setClearConfirmChecked(false); setView("MAIN"); }}>
+            Back
+          </button>
         </div>
+
+        <div className="op-cardBody op-fitBody">
+          <div className="op-banner op-bannerWarn">
+            <div className="op-bannerTitle">Before you clear</div>
+            <div className="op-bannerText">
+              Clearing storage removes locally indexed email text and search data. This cannot be undone.
+            </div>
+          </div>
+
+          <div className="op-spacer" />
+
+          <ClearModal
+            open={true}
+            onClose={() => { setClearConfirmChecked(false); setView("MAIN"); }}
+            onConfirm={clear_confirmed}
+            confirm_checked={clear_confirm_checked}
+            set_confirm_checked={setClearConfirmChecked}
+            token_ok={props.token_ok}
+            access_token={props.access_token}
+            busy_text={busy}
+            error_text={err}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- MAIN VIEW ----------
+  function render_empty_state_banner() {
+    if (!index_empty) return null;
+    return (
+      <div className="op-banner op-bannerStrong" style={{ marginTop: 10 }}>
+        <div className="op-bannerTitle">No emails indexed yet</div>
+        <div className="op-bannerText">Choose folders or emails to make them searchable.</div>
       </div>
     );
   }
@@ -355,16 +380,16 @@ export function IndexManager(props: {
     return (
       <div className="op-fit">
         <div style={{ marginBottom: 10 }}>
-          {render_indexed_panel()}
+          <div className="op-cardTitle">Choose emails to search</div>
+          <div className="op-muted">Pick folders or specific emails to include.</div>
+
+          {busy ? <div className="op-helpNote">{busy}</div> : null}
+          {render_empty_state_banner()}
+
+          <div className="op-spacer" />
 
           <div className="op-row" style={{ justifyContent: "space-between" }}>
-            <div>
-              <div className="op-cardTitle">Index management</div>
-              <div className="op-muted">Choose folders or specific emails to index locally.</div>
-              {busy ? <div className="op-helpNote">{busy}</div> : null}
-            </div>
-
-            <div className="op-seg" role="tablist" aria-label="Index mode">
+            <div className="op-seg" role="tablist" aria-label="Selection mode">
               <button className="op-segBtn" aria-selected={ingest_mode === "FOLDERS"} onClick={() => setIngestMode("FOLDERS")}>
                 Folders
               </button>
@@ -372,6 +397,11 @@ export function IndexManager(props: {
                 Emails
               </button>
             </div>
+
+            {/* Clear storage kept separate from Continue; consistent always */}
+            <button className="op-btn op-btnDanger" onClick={() => setView("CLEAR_STORAGE")}>
+              Clear storage
+            </button>
           </div>
 
           {err ? (
@@ -382,171 +412,131 @@ export function IndexManager(props: {
           ) : null}
         </div>
 
-        <div className="op-fitBody">
-          {ingest_mode === "FOLDERS" ? (
-            <FolderPicker
-              folders={props.folders}
-              folder_filter={folder_filter}
-              set_folder_filter={setFolderFilter}
-              folder_limit_input={folder_limit_input}
-              set_folder_limit_input={setFolderLimitInput}
-              folder_limit_value={folder_limit}
-              selected_folder_ids={selected_folder_ids}
-              toggle_folder={toggle_folder}
-              approx_total={selection_summary.effectiveTotal}
-              folder_count={selection_summary.folderCount}
-              is_large={selection_summary.large}
-              large_warning_text={consent_copy.largeWarning}
-            />
-          ) : (
-            <EmailPicker
-              token_ok={props.token_ok}
-              folders={props.folders}
-              email_folder_id={email_folder_id}
-              set_email_folder_id={setEmailFolderId}
-              on_load_folder={load_email_folder}
-              messages_filter={messages_filter}
-              set_messages_filter={setMessagesFilter}
-              messages={messages}
-              messages_next_link={messages_next_link}
-              on_load_more={load_more_messages}
-              selected_email_ids={selected_email_ids}
-              toggle_email={toggle_email}
-              select_all_filtered={select_all_filtered_emails}
-              clear_selection={clear_email_selection}
-              filtered_messages={filtered_messages}
-              selected_count={selection_summary.emailCount}
-              is_large={selection_summary.large}
-              large_warning_text={consent_copy.largeWarning}
-            />
-          )}
-        </div>
+        {ingest_mode === "FOLDERS" ? (
+          <FolderPicker
+            folders={props.folders}
+            folder_filter={folder_filter}
+            set_folder_filter={setFolderFilter}
+            folder_limit_input={folder_limit_input}
+            set_folder_limit_input={setFolderLimitInput}
+            folder_limit_value={folder_limit}
+            selected_folder_ids={selected_folder_ids}
+            toggle_folder={toggle_folder}
+            approx_total={selection_summary.effectiveTotal}
+            folder_count={selection_summary.folderCount}
+            is_large={selection_summary.large}
+            large_warning_text={consent_copy.largeWarning}
+          />
+        ) : (
+          <EmailPicker
+            token_ok={props.token_ok}
+            folders={props.folders}
+            email_folder_id={email_folder_id}
+            set_email_folder_id={setEmailFolderId}
+            on_load_folder={load_email_folder}
+            messages_filter={messages_filter}
+            set_messages_filter={setMessagesFilter}
+            messages={messages}
+            messages_next_link={messages_next_link}
+            on_load_more={load_more_messages}
+            selected_email_ids={selected_email_ids}
+            toggle_email={toggle_email}
+            clear_selection={clear_email_selection}
+            filtered_messages={filtered_messages}
+            selected_count={selection_summary.emailCount}
+            is_large={selection_summary.large}
+            large_warning_text={consent_copy.largeWarning}
+          />
+        )}
 
         <div className="op-spacer" />
 
-        <div className="op-row" style={{ justifyContent: "space-between" }}>
-          <div className="op-muted">{index_empty ? "Index required before chat." : "You can index more at any time."}</div>
+        <div className="op-row" style={{ justifyContent: "flex-end" }}>
           <button className="op-btn op-btnPrimary" disabled={!can_continue_from_select()} onClick={go_preview}>
             Continue
           </button>
         </div>
-
-        <div className="op-spacer" />
-        <details className="op-card" style={{ padding: 12 }}>
-          <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 800, color: "var(--danger)" }}>
-            Danger zone
-          </summary>
-          <div className="op-spacer" />
-          <div className="op-muted">Clear the full index or clear a specific ingestion run.</div>
-          <div className="op-spacer" />
-          <button className="op-btn op-btnDanger" onClick={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}>
-            Clear…
-          </button>
-
-          <ClearModal
-            open={clear_modal_open}
-            onClose={() => setClearModalOpen(false)}
-            onConfirm={clear_confirmed}
-            confirm_checked={clear_confirm_checked}
-            set_confirm_checked={setClearConfirmChecked}
-            token_ok={props.token_ok}
-            access_token={props.access_token}
-            busy_text={busy}
-            error_text={err}
-          />
-        </details>
       </div>
     );
   }
 
   return (
-    <div className="op-fit">
-      {ingest_step === "SELECT" && render_select_step()}
+    <div className="op-card op-fit">
+      <div className="op-cardBody op-fitBody">
+        {ingest_step === "SELECT" && render_select_step()}
 
-      {ingest_step === "PREVIEW" && (
-        <IngestPreview
-          ingest_mode={ingest_mode}
-          approx_total={selection_summary.effectiveTotal}
-          folder_limit={folder_limit}
-          is_large={selection_summary.large}
-          large_warning_text={consent_copy.largeWarning}
-          consent_bullets={consent_copy.bullets}
-          consent_checked={consent_checked}
-          set_consent_checked={setConsentChecked}
-          large_ack_checked={large_ack_checked}
-          set_large_ack_checked={setLargeAckChecked}
-          error_text={err}
-          onBack={back_to_select}
-          onStart={start_indexing}
-        />
-      )}
+        {ingest_step === "PREVIEW" && (
+          <IngestPreview
+            ingest_mode={ingest_mode}
+            approx_total={selection_summary.effectiveTotal}
+            folder_limit={folder_limit}
+            is_large={selection_summary.large}
+            large_warning_text={consent_copy.largeWarning}
+            consent_bullets={consent_copy.bullets}
+            consent_checked={consent_checked}
+            set_consent_checked={setConsentChecked}
+            large_ack_checked={large_ack_checked}
+            set_large_ack_checked={setLargeAckChecked}
+            error_text={err}
+            onBack={back_to_select}
+            onStart={start_indexing}
+          />
+        )}
 
-      {ingest_step === "RUNNING" && (
-        <IngestProgress
-          run_phase={run_phase}
-          run_total={run_total}
-          fetch_done={fetch_done}
-          ingest_done={ingest_done}
-          cancel_confirm_open={cancel_confirm_open}
-          onCancelClick={cancel_clicked}
-          onCancelContinue={cancel_continue}
-          onCancelNow={cancel_confirm_now}
-        />
-      )}
+        {ingest_step === "RUNNING" && (
+          <IngestProgress
+            run_phase={run_phase}
+            run_total={run_total}
+            fetch_done={fetch_done}
+            ingest_done={ingest_done}
+            cancel_confirm_open={cancel_confirm_open}
+            onCancelClick={cancel_clicked}
+            onCancelContinue={cancel_continue}
+            onCancelNow={cancel_confirm_now}
+          />
+        )}
 
-      {ingest_step === "CANCELLED" && (
-        <>
+        {ingest_step === "CANCELLED" && (
           <IngestResult
             kind="CANCELLED"
             summary={cancel_summary || "Indexing cancelled. Some emails may already be indexed."}
-            onOpenClear={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}
+            onOpenClear={() => setView("CLEAR_STORAGE")}
             onReturnToSelect={() => setIngestStep("SELECT")}
             onIndexMore={() => setIngestStep("SELECT")}
           />
-          <ClearModal
-            open={clear_modal_open}
-            onClose={() => setClearModalOpen(false)}
-            onConfirm={clear_confirmed}
-            confirm_checked={clear_confirm_checked}
-            set_confirm_checked={setClearConfirmChecked}
-            token_ok={props.token_ok}
-            access_token={props.access_token}
-            busy_text={busy}
-            error_text={err}
-          />
-        </>
-      )}
+        )}
 
-      {ingest_step === "COMPLETE" && (
-        <div className="op-fit">
-          <IngestResult
-            kind="COMPLETE"
-            summary={
-              (complete_summary || "Indexing completed successfully.") +
-              (props.index_status?.last_updated ? ` • Updated: ${fmt_dt(props.index_status.last_updated)}` : "")
-            }
-            onOpenClear={() => { setClearModalOpen(true); setClearConfirmChecked(false); }}
-            onReturnToSelect={() => setIngestStep("SELECT")}
-            onIndexMore={() => setIngestStep("SELECT")}
-          />
+        {ingest_step === "COMPLETE" && (
+          <div className="op-fit">
+            <IngestResult
+              kind="COMPLETE"
+              summary={
+                (complete_summary || "Indexing completed successfully.") +
+                (props.index_status?.last_updated ? ` • Updated: ${fmt_dt(props.index_status.last_updated)}` : "")
+              }
+              onOpenClear={() => setView("CLEAR_STORAGE")}
+              onReturnToSelect={() => setIngestStep("SELECT")}
+              onIndexMore={() => setIngestStep("SELECT")}
+            />
 
-          <div className="op-spacer" />
+            <div className="op-spacer" />
 
-          <div className="op-row">
-            <button
-              className="op-btn op-btnPrimary"
-              onClick={() => props.onNavigate?.("CHAT")}
-              disabled={(props.index_status?.indexed_count || 0) <= 0}
-              title={(props.index_status?.indexed_count || 0) <= 0 ? "Index emails first" : "Go to chat"}
-            >
-              Go to chat
-            </button>
-            <button className="op-btn" onClick={() => setIngestStep("SELECT")}>
-              Index more
-            </button>
+            <div className="op-row">
+              <button
+                className="op-btn op-btnPrimary"
+                onClick={() => props.onNavigate?.("CHAT")}
+                disabled={(props.index_status?.indexed_count || 0) <= 0}
+                title={(props.index_status?.indexed_count || 0) <= 0 ? "Index emails first" : "Go to chat"}
+              >
+                Go to chat
+              </button>
+              <button className="op-btn" onClick={() => setIngestStep("SELECT")}>
+                Index more
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

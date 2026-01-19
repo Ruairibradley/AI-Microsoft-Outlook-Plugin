@@ -26,19 +26,28 @@ export function FolderPicker(props: {
   }, [props.folders, props.folder_filter]);
 
   return (
-    <div className="op-card" style={{ padding: 12 }}>
-      <div className="op-row" style={{ alignItems: "flex-end" }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
+    <div className="op-card" style={{ padding: 12, maxWidth: "100%" }}>
+      {/* Responsive controls: stack on narrow panes */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr",
+          gap: 10,
+          maxWidth: "100%"
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
           <div className="op-label">Folder search</div>
           <input
             className="op-input"
             value={props.folder_filter}
             onChange={(e) => props.set_folder_filter(e.target.value)}
-            placeholder="Filter folders…"
+            placeholder="Type to filter folders…"
+            style={{ width: "100%" }}
           />
         </div>
 
-        <div style={{ width: 140 }}>
+        <div style={{ minWidth: 0 }}>
           <div className="op-label">Per-folder limit</div>
           <input
             className="op-input"
@@ -51,17 +60,22 @@ export function FolderPicker(props: {
               else props.set_folder_limit_input(String(Math.max(1, Math.min(2000, Math.floor(n)))));
             }}
             placeholder="100"
+            style={{ width: "100%" }}
           />
+          <div className="op-helpNote" style={{ marginTop: 6 }}>
+            Index up to <strong>{props.folder_limit_value}</strong> most recent emails per selected folder.
+          </div>
         </div>
       </div>
 
       <div className="op-spacer" />
 
-      <div className="op-list">
+      <div className="op-list" style={{ maxWidth: "100%" }}>
         <div className="op-listScroll">
           {filtered_folders.length ? (
             filtered_folders.map((f) => {
               const checked = props.selected_folder_ids.has(f.id);
+
               return (
                 <div key={f.id} className="op-item">
                   <div className="op-itemRow">
@@ -74,8 +88,7 @@ export function FolderPicker(props: {
                     <div className="op-itemMain">
                       <div className="op-itemTitle">{f.displayName}</div>
                       <div className="op-itemMeta">
-                        {typeof f.totalItemCount === "number" ? `${f.totalItemCount} total` : "Count unavailable"} •
-                        Indexing up to {props.folder_limit_value}
+                        {typeof f.totalItemCount === "number" ? `${f.totalItemCount} total` : "Count unavailable"}
                       </div>
                     </div>
                   </div>
@@ -92,7 +105,7 @@ export function FolderPicker(props: {
 
       <div className="op-spacer" />
 
-      <div className="op-banner">
+      <div className="op-banner" style={{ maxWidth: "100%" }}>
         <div className="op-bannerTitle">Selection summary</div>
         <div className="op-bannerText">
           Folders: <strong>{props.folder_count}</strong> • Approx emails: <strong>{props.approx_total}</strong>

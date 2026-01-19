@@ -122,3 +122,5 @@
 {"event": "ingest", "sqlite_upsert_ms": 7.220700033940375, "embedding_ms": 2916.999900015071, "chroma_upsert_ms": 108.1028999760747, "ingested_count": 1, "ingestion_id": "ing_7ae3941b-0cab-46e7-be4f-744e988d54a9", "timestamp": "2026-01-19T16:57:17"}
 {"event": "search", "embedding_query_ms": 10.921399982180446, "vector_search_ms": 49.32960000587627, "query": "how much overtime will i be paid?", "timestamp": "2026-01-19T16:57:33"}
 {"event": "llm", "llm_inference_ms": 29255.747900053393, "avg_cpu_percent": 61.9, "peak_cpu_percent": 83.8, "peak_mem_mb": 474.3, "model": "qwen2.5:3b", "timestamp": "2026-01-19T16:58:02"}
+{"event": "ingest", "sqlite_upsert_ms": 5.418599990662187, "embedding_ms": 3037.261200021021, "chroma_upsert_ms": 88.65039999363944, "ingested_count": 5, "ingestion_id": "ing_0fa2c380-9fae-44b3-a2af-8f914a328af1", "timestamp": "2026-01-19T19:26:23"}
+{"event": "ingest", "sqlite_upsert_ms": 5.954199994448572, "embedding_ms": 20.70689998799935, "chroma_upsert_ms": 21.04009996401146, "ingested_count": 1, "ingestion_id": "ing_0fa2c380-9fae-44b3-a2af-8f914a328af1", "timestamp": "2026-01-19T19:26:27"}
