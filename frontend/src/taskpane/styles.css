@@ -1,6 +1,5 @@
 /* ---- Theme tokens (light + dark), color-blind friendly ---- */
 :root {
-  /* Distinguish from Outlook: lightly tinted background */
   --bg: #f6f7fb;
   --panel: #ffffff;
   --panel-2: #fbfbfd;
@@ -9,28 +8,24 @@
   --text: #111827;
   --muted: #5b6477;
 
-  /* Accent: indigo-violet (distinct from Outlook blue, color-blind friendly) */
   --accent: #5b5ce6;
   --accent-2: #4a4bd1;
   --accent-contrast: #ffffff;
 
-  /* Semantic */
-  --success: #0ea5a4; /* teal */
-  --warning: #f59e0b; /* amber */
-  --danger: #ef4444;  /* red */
+  --success: #0ea5a4;
+  --warning: #f59e0b;
+  --danger: #ef4444;
 
   --shadow: 0 8px 22px rgba(17, 24, 39, 0.08);
   --shadow-soft: 0 6px 14px rgba(17, 24, 39, 0.06);
 
   --radius: 12px;
-
   --focus: 0 0 0 3px rgba(91, 92, 230, 0.35);
 
   --font: "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
 
-  /* sizing */
-  --pad: 12px;
-  --gap: 10px;
+  --pad: clamp(10px, 1.6vh, 16px);
+  --gap: clamp(8px, 1.2vh, 12px);
 }
 
 /* Dark mode */
@@ -66,9 +61,10 @@
   display: flex;
   flex-direction: column;
   font-family: var(--font);
+  font-size: clamp(13px, 1.25vh, 15px);
   color: var(--text);
   background: var(--bg);
-  overflow: hidden; /* ensures features do not scroll the whole pane */
+  overflow: hidden;
 }
 
 .op-header {
@@ -78,30 +74,18 @@
 }
 
 .op-title {
-  font-size: 16px;
-  font-weight: 700;
+  font-size: clamp(16px, 1.8vh, 18px);
+  font-weight: 800;
   letter-spacing: 0.2px;
   margin: 0 0 6px 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.op-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--muted);
-  background: var(--panel-2);
 }
 
 .op-subline {
-  font-size: 12px;
+  font-size: clamp(12px, 1.15vh, 13.5px);
   color: var(--muted);
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
 }
 
@@ -112,7 +96,7 @@
   flex-wrap: wrap;
 }
 
-/* Body: scroll only within section containers */
+/* Body */
 .op-body {
   flex: 1;
   min-height: 0;
@@ -120,6 +104,7 @@
   overflow: hidden;
 }
 
+/* Cards */
 .op-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -137,41 +122,55 @@
 }
 
 .op-cardTitle {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: clamp(13px, 1.4vh, 15px);
+  font-weight: 800;
   margin: 0;
 }
 
 .op-cardBody {
-  padding: 12px;
+  padding: clamp(10px, 1.4vh, 14px);
 }
 
 .op-muted {
   color: var(--muted);
-  font-size: 12px;
+  font-size: clamp(12px, 1.15vh, 13.5px);
 }
 
 .op-row {
   display: flex;
-  gap: 10px;
+  gap: var(--gap);
   align-items: center;
   flex-wrap: wrap;
 }
 
 .op-spacer {
-  height: 10px;
+  height: var(--gap);
 }
 
-/* ---- Buttons (feedback + accessibility) ---- */
+/* Layout helpers */
+.op-fit {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.op-fitBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ---- Buttons ---- */
 .op-btn {
   appearance: none;
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text);
-  padding: 8px 10px;
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: clamp(12px, 1.15vh, 14px);
+  font-weight: 700;
   cursor: pointer;
   transition: transform 80ms ease, background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
   user-select: none;
@@ -220,41 +219,29 @@
 }
 
 .op-btnDanger:hover {
-  border-color: rgba(239, 68, 68, 0.8);
+  border-color: rgba(239, 68, 68, 0.85);
   box-shadow: var(--shadow-soft);
 }
 
-/* segmented nav buttons */
-.op-seg {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--panel);
-}
-
-.op-segBtn {
-  border: none;
-  border-right: 1px solid var(--border);
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  color: var(--muted);
+/* Link-style button */
+.op-linkBtn {
   background: transparent;
-  transition: background 120ms ease, color 120ms ease;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-weight: 900;
+  font-size: clamp(12px, 1.15vh, 14px);
+  cursor: pointer;
 }
 
-.op-segBtn:last-child { border-right: none; }
-
-.op-segBtn:hover {
-  background: var(--panel-2);
-  color: var(--text);
+.op-linkBtn:hover {
+  text-decoration: underline;
 }
 
-.op-segBtn[aria-selected="true"] {
-  background: rgba(91, 92, 230, 0.12);
-  color: var(--text);
+.op-linkBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+  border-radius: 8px;
 }
 
 /* ---- Inputs ---- */
@@ -263,9 +250,9 @@
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text);
-  border-radius: 10px;
-  padding: 8px 10px;
-  font-size: 12px;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: clamp(12px, 1.15vh, 14px);
   transition: box-shadow 120ms ease, border-color 120ms ease;
 }
 
@@ -278,8 +265,8 @@
 }
 
 .op-label {
-  font-size: 12px;
-  font-weight: 700;
+  font-size: clamp(12px, 1.15vh, 14px);
+  font-weight: 800;
   margin-bottom: 6px;
 }
 
@@ -288,7 +275,7 @@
   border: 1px solid var(--border);
   background: var(--panel-2);
   border-radius: var(--radius);
-  padding: 10px 12px;
+  padding: 12px 14px;
 }
 
 .op-bannerStrong {
@@ -307,38 +294,15 @@
 }
 
 .op-bannerTitle {
-  font-size: 12px;
-  font-weight: 800;
+  font-size: clamp(12px, 1.25vh, 14px);
+  font-weight: 900;
   margin: 0 0 4px 0;
 }
 
 .op-bannerText {
-  font-size: 12px;
+  font-size: clamp(12px, 1.2vh, 14px);
   color: var(--muted);
   margin: 0;
-}
-
-/* ---- Wizard ---- */
-.op-wizardSteps {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
-.op-chip {
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--muted);
-}
-
-.op-chipActive {
-  border-color: rgba(91, 92, 230, 0.55);
-  background: rgba(91, 92, 230, 0.12);
-  color: var(--text);
 }
 
 /* ---- Progress ---- */
@@ -350,22 +314,22 @@
 }
 
 .op-progressBar {
-  height: 10px;
+  height: 12px;
   background: rgba(91, 92, 230, 0.18);
   border-radius: 999px;
   overflow: hidden;
 }
 
 .op-progressFill {
-  height: 10px;
+  height: 12px;
   background: var(--accent);
   width: 0%;
   transition: width 220ms ease;
 }
 
 .op-spinner {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 999px;
   border: 2px solid rgba(91, 92, 230, 0.25);
   border-top-color: var(--accent);
@@ -377,17 +341,17 @@
 /* ---- Lists ---- */
 .op-list {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
 }
 
 .op-listScroll {
-  max-height: 220px;
+  max-height: 240px;
   overflow: auto;
 }
 
 .op-item {
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
@@ -406,8 +370,8 @@
 }
 
 .op-itemTitle {
-  font-size: 12px;
-  font-weight: 800;
+  font-size: clamp(12px, 1.2vh, 14px);
+  font-weight: 900;
   margin: 0 0 2px 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -415,7 +379,7 @@
 }
 
 .op-itemMeta {
-  font-size: 12px;
+  font-size: clamp(12px, 1.15vh, 13.5px);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -423,7 +387,7 @@
 }
 
 .op-itemPreview {
-  font-size: 12px;
+  font-size: clamp(12px, 1.15vh, 13.5px);
   color: var(--text);
   opacity: 0.92;
   margin-top: 4px;
@@ -449,8 +413,8 @@
   border-radius: var(--radius);
   background: var(--panel);
   box-shadow: var(--shadow-soft);
-  padding: 10px 12px;
-  margin-bottom: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
 }
 
 .op-bubbleUser {
@@ -467,8 +431,8 @@
 }
 
 .op-bubbleRole {
-  font-size: 12px;
-  font-weight: 800;
+  font-size: clamp(12px, 1.15vh, 14px);
+  font-weight: 900;
 }
 
 .op-bubbleTime {
@@ -477,16 +441,15 @@
 }
 
 .op-bubbleText {
-  font-size: 13px;
+  font-size: clamp(13px, 1.25vh, 15px);
   white-space: pre-wrap;
 }
 
-/* Sources compact disclosure */
 .op-sourcesToggle {
-  margin-top: 8px;
-  font-size: 12px;
+  margin-top: 10px;
+  font-size: clamp(12px, 1.15vh, 14px);
   color: var(--accent);
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
   display: inline-flex;
   gap: 6px;
@@ -495,10 +458,10 @@
 }
 
 .op-sourceRow {
-  margin-top: 8px;
+  margin-top: 10px;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 8px 10px;
+  border-radius: 14px;
+  padding: 10px 12px;
   background: var(--panel-2);
 }
 
@@ -510,8 +473,8 @@
 }
 
 .op-sourceLink {
-  font-size: 12px;
-  font-weight: 800;
+  font-size: clamp(12px, 1.15vh, 14px);
+  font-weight: 900;
   color: var(--accent);
   background: transparent;
   border: none;
@@ -524,25 +487,68 @@
 .op-chatComposer {
   border-top: 1px solid var(--border);
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
-  padding: 10px 12px;
+  padding: clamp(10px, 1.4vh, 14px);
 }
 
 .op-helpNote {
-  font-size: 12px;
+  font-size: clamp(12px, 1.15vh, 13.5px);
   color: var(--muted);
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
-/* Ensure section cards fit without making whole app scroll */
-.op-fit {
-  height: 100%;
+/* ---- Modal ---- */
+.op-modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pad);
+  z-index: 9999;
+}
+
+.op-modalCard {
+  width: min(520px, 100%);
+  max-height: min(80vh, 520px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  overflow: hidden;
 }
 
-.op-fitBody {
-  flex: 1;
-  min-height: 0;
+.op-modalHeader {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.op-modalBody {
+  padding: 12px 14px;
   overflow: auto;
+}
+
+.op-modalFooter {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Small-height panes */
+@media (max-height: 720px) {
+  :root {
+    --pad: 10px;
+    --gap: 8px;
+  }
+
+  .op-modalCard {
+    max-height: min(84vh, 460px);
+  }
 }

@@ -5,7 +5,7 @@ import { sign_in_interactive, try_get_access_token_silent, get_signed_in_user, s
 import { get_folders, get_index_status, type IndexStatus } from "../api/backend";
 
 import { IndexManager } from "./components/indexmanager";
-import { ChatPane } from "./components/chatpane"; // your lowercase filename
+import { ChatPane } from "./components/chatpane";
 import { clear_chat_storage } from "./chat/storage";
 import { WelcomeSignIn } from "./components/welcomesignin";
 
@@ -25,7 +25,6 @@ function fmt_dt(s: string | null | undefined) {
 export default function TaskPaneView() {
   const [screen, setScreen] = useState<Screen>("SIGNIN");
 
-  const [status, setStatus] = useState("Starting…");
   const [busy, setBusy] = useState<string>("");
 
   const [error, setError] = useState<string>("");
@@ -53,13 +52,11 @@ export default function TaskPaneView() {
 
     const exists = (st?.indexed_count || 0) > 0;
 
-    // Deterministic routing: if no index, force Index screen
     if (!exists) {
       setScreen("INDEX");
       return;
     }
 
-    // If we have an index, default to chat unless caller asks otherwise
     if (nextPreferredScreen) setScreen(nextPreferredScreen);
     else if (screen === "SIGNIN" || screen === "INDEX") setScreen("CHAT");
   }
@@ -70,14 +67,12 @@ export default function TaskPaneView() {
   }
 
   async function on_index_changed() {
-    // After indexing/clearing, re-check index and route correctly
     await refresh_index_status(null);
   }
 
   // ---------- startup ----------
   async function initialize() {
     set_error("");
-    setStatus("Checking session…");
     setBusy("");
 
     try {
@@ -89,7 +84,6 @@ export default function TaskPaneView() {
         setIndexStatus(null);
         setFolders([]);
         setScreen("SIGNIN");
-        setStatus("Not signed in");
         return;
       }
 
@@ -99,13 +93,8 @@ export default function TaskPaneView() {
       const who = await get_signed_in_user();
       setUserLabel(who?.username || who?.name || "");
 
-      setStatus("Loading local index status…");
       await refresh_index_status();
-
-      setStatus("Loading folders…");
       await refresh_folders(token);
-
-      setStatus("Ready");
     } catch (e: any) {
       setTokenOk(false);
       setAccessToken("");
@@ -113,7 +102,6 @@ export default function TaskPaneView() {
       setIndexStatus(null);
       setFolders([]);
       setScreen("SIGNIN");
-      setStatus("Error");
       set_error("Initialization failed. Please sign in again.", String(e?.message || e));
     }
   }
@@ -136,13 +124,8 @@ export default function TaskPaneView() {
       const who = await get_signed_in_user();
       setUserLabel(who?.username || who?.name || "");
 
-      setStatus("Loading local index status…");
       await refresh_index_status();
-
-      setStatus("Loading folders…");
       await refresh_folders(token);
-
-      setStatus("Ready");
     } catch (e: any) {
       setTokenOk(false);
       setAccessToken("");
@@ -150,7 +133,6 @@ export default function TaskPaneView() {
       setIndexStatus(null);
       setFolders([]);
       setScreen("SIGNIN");
-      setStatus("Error");
       set_error("Sign in failed. Please try again.", String(e?.message || e));
     } finally {
       setBusy("");
@@ -170,18 +152,15 @@ export default function TaskPaneView() {
       setFolders([]);
 
       clear_chat_storage();
-
       setScreen("SIGNIN");
-      setStatus("Not signed in");
     } catch (e: any) {
-      setStatus("Error");
       set_error("Sign out failed.", String(e?.message || e));
     } finally {
       setBusy("");
     }
   }
 
-  // ---------- UI blocks ----------
+  // ---------- UI ----------
   function render_error() {
     if (!error) return null;
     return (
@@ -199,22 +178,21 @@ export default function TaskPaneView() {
   }
 
   function render_header() {
+    // Header should appear only once logged in, to avoid duplicate title bar on welcome screen.
+    if (screen === "SIGNIN") return null;
+
     return (
       <div className="op-header">
-        <div className="op-title">
-          Outlook Privacy Assistant
-          <span className="op-badge">Local</span>
-        </div>
-
         <div className="op-subline">
-          <span><strong>Status:</strong> {status}</span>
-          {busy ? <span>• {busy}</span> : null}
-          {token_ok && user_label ? <span>• <strong>Signed in:</strong> {user_label}</span> : null}
+          {token_ok && user_label ? <span><strong>Signed in:</strong> {user_label}</span> : null}
+
           {token_ok && index_status ? (
             <span>
               • <strong>Indexed:</strong> {index_status.indexed_count} • <strong>Updated:</strong> {fmt_dt(index_status.last_updated)}
             </span>
           ) : null}
+
+          {busy ? <span>• {busy}</span> : null}
         </div>
 
         {token_ok ? (
@@ -231,8 +209,7 @@ export default function TaskPaneView() {
           </div>
         ) : null}
 
-        {/* Avoid duplicate error blocks on the welcome screen */}
-        {screen !== "SIGNIN" ? render_error() : null}
+        {render_error()}
       </div>
     );
   }
@@ -261,10 +238,7 @@ export default function TaskPaneView() {
   }
 
   function render_chat_screen() {
-    if (!index_exists) {
-      // If user somehow navigates to Chat without index, enforce Index screen
-      return render_index_screen();
-    }
+    if (!index_exists) return render_index_screen();
 
     return (
       <div className="op-fit" style={{ height: "100%" }}>
