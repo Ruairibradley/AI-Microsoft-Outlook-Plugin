@@ -332,7 +332,13 @@ export function IndexManager(props: {
             <div className="op-cardTitle">Clear storage</div>
             <div className="op-muted">Remove local indexed email data.</div>
           </div>
-          <button className="op-btn" onClick={() => { setClearConfirmChecked(false); setView("MAIN"); }}>
+          <button
+            className="op-btn"
+            onClick={() => {
+              setClearConfirmChecked(false);
+              setView("MAIN");
+            }}
+          >
             Back
           </button>
         </div>
@@ -349,7 +355,10 @@ export function IndexManager(props: {
 
           <ClearModal
             open={true}
-            onClose={() => { setClearConfirmChecked(false); setView("MAIN"); }}
+            onClose={() => {
+              setClearConfirmChecked(false);
+              setView("MAIN");
+            }}
             onConfirm={clear_confirmed}
             confirm_checked={clear_confirm_checked}
             set_confirm_checked={setClearConfirmChecked}
@@ -367,27 +376,33 @@ export function IndexManager(props: {
   function render_select_step() {
     return (
       <div className="op-fit">
-        {/* Tightened header spacing so content moves up */}
-        <div style={{ marginBottom: 6 }}>
-          {/* Updated copy per request */}
+        {/* Single header only (new copy). No “Emails / …” header rendered anywhere else in this file. */}
+        <div style={{ marginBottom: 8 }}>
           <div className="op-cardTitle">Choose emails to search</div>
           <div className="op-muted">Pick folders or specific emails to include.</div>
 
           {busy ? <div className="op-helpNote">{busy}</div> : null}
 
-          {/* Removed extra spacer here to pull controls upward */}
+          {/* Intentionally NO “No emails indexed yet” callout here */}
 
-          {/* Clear storage always left; segmented always right */}
-          <div className="op-row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+          <div className="op-row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
             <button className="op-btn op-btnDanger" onClick={() => setView("CLEAR_STORAGE")}>
               Clear storage
             </button>
 
             <div className="op-seg" role="tablist" aria-label="Selection mode">
-              <button className="op-segBtn" aria-selected={ingest_mode === "FOLDERS"} onClick={() => setIngestMode("FOLDERS")}>
+              <button
+                className="op-segBtn"
+                aria-selected={ingest_mode === "FOLDERS"}
+                onClick={() => setIngestMode("FOLDERS")}
+              >
                 Folders
               </button>
-              <button className="op-segBtn" aria-selected={ingest_mode === "EMAILS"} onClick={() => setIngestMode("EMAILS")}>
+              <button
+                className="op-segBtn"
+                aria-selected={ingest_mode === "EMAILS"}
+                onClick={() => setIngestMode("EMAILS")}
+              >
                 Emails
               </button>
             </div>
@@ -445,17 +460,13 @@ export function IndexManager(props: {
             Continue
           </button>
         </div>
-
-        <div className="op-helpNote">
-          You can’t use Chat until you index at least one email.
-        </div>
       </div>
     );
   }
 
   return (
     <div className="op-card op-fit">
-      {/* Header removed to avoid repeating "Emails / ..." and reclaim vertical space */}
+      {/* Important: no op-cardHeader here, to avoid the duplicate “Emails …” block you are seeing */}
       <div className="op-cardBody op-fitBody">
         {ingest_step === "SELECT" && render_select_step()}
 
