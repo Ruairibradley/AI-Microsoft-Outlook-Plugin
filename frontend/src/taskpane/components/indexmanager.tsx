@@ -367,16 +367,18 @@ export function IndexManager(props: {
   function render_select_step() {
     return (
       <div className="op-fit">
-        <div style={{ marginBottom: 10 }}>
+        {/* Tightened header spacing so content moves up */}
+        <div style={{ marginBottom: 6 }}>
+          {/* Updated copy per request */}
           <div className="op-cardTitle">Choose emails to search</div>
           <div className="op-muted">Pick folders or specific emails to include.</div>
 
           {busy ? <div className="op-helpNote">{busy}</div> : null}
 
-          <div className="op-spacer" />
+          {/* Removed extra spacer here to pull controls upward */}
 
           {/* Clear storage always left; segmented always right */}
-          <div className="op-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <div className="op-row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
             <button className="op-btn op-btnDanger" onClick={() => setView("CLEAR_STORAGE")}>
               Clear storage
             </button>
@@ -453,7 +455,7 @@ export function IndexManager(props: {
 
   return (
     <div className="op-card op-fit">
-      {/* Removed extra “Emails / Choose what to include…” header entirely */}
+      {/* Header removed to avoid repeating "Emails / ..." and reclaim vertical space */}
       <div className="op-cardBody op-fitBody">
         {ingest_step === "SELECT" && render_select_step()}
 
