@@ -6,7 +6,7 @@ function fmt_short_dt(iso: string): string {
   // Output "DD/MM HH:MM"
   try {
     const [datePart, timePartRaw] = iso.split("T");
-    const [yyyy, mm, dd] = datePart.split("-");
+    const [_, mm, dd] = datePart.split("-");
     const hhmm = (timePartRaw || "").slice(0, 5);
     if (!dd || !mm) return iso;
     return `${dd}/${mm} ${hhmm}`;

@@ -378,7 +378,7 @@ export function IndexManager(props: {
       <div className="op-fit">
         {/* Single header only (new copy). No “Emails / …” header rendered anywhere else in this file. */}
         <div style={{ marginBottom: 8 }}>
-          <div className="op-cardTitle">Choose emails to search</div>
+          <div className="op-cardTitle">CANARY 123 Choose emails to search</div>
           <div className="op-muted">Pick folders or specific emails to include.</div>
 
           {busy ? <div className="op-helpNote">{busy}</div> : null}
