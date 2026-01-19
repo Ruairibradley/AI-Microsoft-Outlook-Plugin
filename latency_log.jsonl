@@ -124,3 +124,10 @@
 {"event": "llm", "llm_inference_ms": 29255.747900053393, "avg_cpu_percent": 61.9, "peak_cpu_percent": 83.8, "peak_mem_mb": 474.3, "model": "qwen2.5:3b", "timestamp": "2026-01-19T16:58:02"}
 {"event": "ingest", "sqlite_upsert_ms": 5.418599990662187, "embedding_ms": 3037.261200021021, "chroma_upsert_ms": 88.65039999363944, "ingested_count": 5, "ingestion_id": "ing_0fa2c380-9fae-44b3-a2af-8f914a328af1", "timestamp": "2026-01-19T19:26:23"}
 {"event": "ingest", "sqlite_upsert_ms": 5.954199994448572, "embedding_ms": 20.70689998799935, "chroma_upsert_ms": 21.04009996401146, "ingested_count": 1, "ingestion_id": "ing_0fa2c380-9fae-44b3-a2af-8f914a328af1", "timestamp": "2026-01-19T19:26:27"}
+{"event": "ingest", "sqlite_upsert_ms": 5.329500010702759, "embedding_ms": 2794.913000019733, "chroma_upsert_ms": 113.06629999307916, "ingested_count": 1, "ingestion_id": "ing_158f42f0-1300-4c82-958e-4256ed7ba372", "timestamp": "2026-01-19T22:37:21"}
+{"event": "search", "embedding_query_ms": 13.077299983706325, "vector_search_ms": 60.890200024005026, "query": "how much overtime will i be paid?", "timestamp": "2026-01-19T22:37:42"}
+{"event": "llm", "llm_inference_ms": 12801.804000046104, "avg_cpu_percent": 64.1, "peak_cpu_percent": 100.0, "peak_mem_mb": 475.5, "model": "qwen2.5:3b", "timestamp": "2026-01-19T22:37:55"}
+{"event": "search", "embedding_query_ms": 13.665400038007647, "vector_search_ms": 2.58829997619614, "query": "and what is my hourly rate for overtime work i have done this month", "timestamp": "2026-01-19T22:38:34"}
+{"event": "llm", "llm_inference_ms": 3947.977300034836, "avg_cpu_percent": 74.6, "peak_cpu_percent": 84.1, "peak_mem_mb": 317.2, "model": "qwen2.5:3b", "timestamp": "2026-01-19T22:38:38"}
+{"event": "search", "embedding_query_ms": 8.457600022666156, "vector_search_ms": 2.1286000264808536, "query": "how much overtime have i worked and whats the hourly rate ?", "timestamp": "2026-01-19T22:39:09"}
+{"event": "llm", "llm_inference_ms": 7558.5295999771915, "avg_cpu_percent": 70.9, "peak_cpu_percent": 98.1, "peak_mem_mb": 318.1, "model": "qwen2.5:3b", "timestamp": "2026-01-19T22:39:17"}

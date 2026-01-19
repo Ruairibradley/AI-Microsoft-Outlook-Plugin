@@ -587,3 +587,77 @@
   /* Slightly reduce internal list height on small panes (still temporary until picker refactor) */
   .op-listScroll { max-height: 210px; }
 }
+
+/* ------------------------------------------------------------
+   Scrollbar styling (blends with theme, less visually loud)
+   Works in Firefox (scrollbar-color) and Chromium/WebKit.
+------------------------------------------------------------ */
+
+/* Firefox */
+.op-fitBody,
+.op-listScroll,
+.op-chatTranscript,
+.op-modalBody {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(91, 92, 230, 0.35) transparent;
+}
+
+/* Chromium / WebKit */
+.op-fitBody::-webkit-scrollbar,
+.op-listScroll::-webkit-scrollbar,
+.op-chatTranscript::-webkit-scrollbar,
+.op-modalBody::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.op-fitBody::-webkit-scrollbar-track,
+.op-listScroll::-webkit-scrollbar-track,
+.op-chatTranscript::-webkit-scrollbar-track,
+.op-modalBody::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.op-fitBody::-webkit-scrollbar-thumb,
+.op-listScroll::-webkit-scrollbar-thumb,
+.op-chatTranscript::-webkit-scrollbar-thumb,
+.op-modalBody::-webkit-scrollbar-thumb {
+  background: rgba(91, 92, 230, 0.22);
+  border: 3px solid transparent;   /* creates “inset” look */
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.op-fitBody::-webkit-scrollbar-thumb:hover,
+.op-listScroll::-webkit-scrollbar-thumb:hover,
+.op-chatTranscript::-webkit-scrollbar-thumb:hover,
+.op-modalBody::-webkit-scrollbar-thumb:hover {
+  background: rgba(91, 92, 230, 0.35);
+  background-clip: content-box;
+}
+
+/* Dark mode: softer thumb */
+@media (prefers-color-scheme: dark) {
+  .op-fitBody,
+  .op-listScroll,
+  .op-chatTranscript,
+  .op-modalBody {
+    scrollbar-color: rgba(124, 125, 255, 0.35) transparent;
+  }
+
+  .op-fitBody::-webkit-scrollbar-thumb,
+  .op-listScroll::-webkit-scrollbar-thumb,
+  .op-chatTranscript::-webkit-scrollbar-thumb,
+  .op-modalBody::-webkit-scrollbar-thumb {
+    background: rgba(124, 125, 255, 0.22);
+    background-clip: content-box;
+  }
+
+  .op-fitBody::-webkit-scrollbar-thumb:hover,
+  .op-listScroll::-webkit-scrollbar-thumb:hover,
+  .op-chatTranscript::-webkit-scrollbar-thumb:hover,
+  .op-modalBody::-webkit-scrollbar-thumb:hover {
+    background: rgba(124, 125, 255, 0.35);
+    background-clip: content-box;
+  }
+}

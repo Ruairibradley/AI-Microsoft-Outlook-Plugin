@@ -82,8 +82,6 @@ export function IndexManager(props: {
   // clear storage sub-screen state
   const [clear_confirm_checked, setClearConfirmChecked] = useState(false);
 
-  const index_empty = (props.index_status?.indexed_count || 0) <= 0;
-
   const consent_copy = useMemo(() => {
     return {
       bullets: [
@@ -366,16 +364,6 @@ export function IndexManager(props: {
   }
 
   // ---------- MAIN VIEW ----------
-  function render_empty_state_banner() {
-    if (!index_empty) return null;
-    return (
-      <div className="op-banner op-bannerStrong" style={{ marginTop: 10 }}>
-        <div className="op-bannerTitle">No emails indexed yet</div>
-        <div className="op-bannerText">Choose folders or emails to make them searchable.</div>
-      </div>
-    );
-  }
-
   function render_select_step() {
     return (
       <div className="op-fit">
@@ -384,11 +372,15 @@ export function IndexManager(props: {
           <div className="op-muted">Pick folders or specific emails to include.</div>
 
           {busy ? <div className="op-helpNote">{busy}</div> : null}
-          {render_empty_state_banner()}
 
           <div className="op-spacer" />
 
-          <div className="op-row" style={{ justifyContent: "space-between" }}>
+          {/* Clear storage always left; segmented always right */}
+          <div className="op-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <button className="op-btn op-btnDanger" onClick={() => setView("CLEAR_STORAGE")}>
+              Clear storage
+            </button>
+
             <div className="op-seg" role="tablist" aria-label="Selection mode">
               <button className="op-segBtn" aria-selected={ingest_mode === "FOLDERS"} onClick={() => setIngestMode("FOLDERS")}>
                 Folders
@@ -397,11 +389,6 @@ export function IndexManager(props: {
                 Emails
               </button>
             </div>
-
-            {/* Clear storage kept separate from Continue; consistent always */}
-            <button className="op-btn op-btnDanger" onClick={() => setView("CLEAR_STORAGE")}>
-              Clear storage
-            </button>
           </div>
 
           {err ? (
@@ -456,12 +443,17 @@ export function IndexManager(props: {
             Continue
           </button>
         </div>
+
+        <div className="op-helpNote">
+          You can’t use Chat until you index at least one email.
+        </div>
       </div>
     );
   }
 
   return (
     <div className="op-card op-fit">
+      {/* Removed extra “Emails / Choose what to include…” header entirely */}
       <div className="op-cardBody op-fitBody">
         {ingest_step === "SELECT" && render_select_step()}
 

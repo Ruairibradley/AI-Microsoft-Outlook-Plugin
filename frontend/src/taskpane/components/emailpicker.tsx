@@ -39,9 +39,16 @@ export function EmailPicker(props: {
     return "";
   }, [props.email_folder_id, props.filtered_messages.length]);
 
+  const smallBtnStyle: React.CSSProperties = {
+    padding: "6px 10px",
+    borderRadius: 10,
+    fontSize: 12,
+    fontWeight: 800
+  };
+
   return (
     <div className="op-card" style={{ padding: 12, maxWidth: "100%" }}>
-      {/* Controls */}
+      {/* Controls (stacked, no overflow) */}
       <div
         style={{
           display: "grid",
@@ -82,20 +89,18 @@ export function EmailPicker(props: {
 
       <div className="op-spacer" />
 
-      {/* Compact action row: only show what matters */}
+      {/* Compact actions: only show when relevant */}
       <div className="op-row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-        <div className="op-row" style={{ gap: 10 }}>
+        <div className="op-row" style={{ gap: 8 }}>
           {props.messages_next_link ? (
-            <button className="op-linkBtn" onClick={props.on_load_more} type="button">
+            <button className="op-btn" style={smallBtnStyle} onClick={props.on_load_more}>
               Load more
             </button>
-          ) : (
-            <span className="op-muted" style={{ fontSize: 12 }}> </span>
-          )}
+          ) : null}
 
           {props.selected_count > 0 ? (
-            <button className="op-linkBtn" onClick={props.clear_selection} type="button" title="Clear selected emails">
-              Clear selected
+            <button className="op-btn" style={smallBtnStyle} onClick={props.clear_selection}>
+              Clear
             </button>
           ) : null}
         </div>
@@ -134,7 +139,7 @@ export function EmailPicker(props: {
                       <div className="op-itemMeta">
                         {truncate(from, 32)} • {truncate(m.receivedDateTime || "", 22)}
                       </div>
-                      {/* Minimal preview, one short line */}
+                      {/* Minimal preview (optional, single short line) */}
                       {m.bodyPreview ? (
                         <div className="op-itemPreview">{truncate(m.bodyPreview, 90)}</div>
                       ) : null}
