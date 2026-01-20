@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ask_question, get_message_link } from "../../api/backend";
-import { ChatMsg, ChatState, CHAT_TTL_MS, clear_chat_storage, load_chat_from_storage, save_chat_to_storage, type Source } from "../chat/storage";
+import {
+  ChatMsg,
+  ChatState,
+  CHAT_TTL_MS,
+  clear_chat_storage,
+  load_chat_from_storage,
+  save_chat_to_storage,
+  type Source
+} from "../chat/storage";
 
 function truncate(s: string, n: number) {
   if (!s) return "";
@@ -41,7 +49,8 @@ export function ChatPane(props: {
   token_ok: boolean;
   access_token: string;
   index_exists: boolean;
-  index_count: number;
+  index_count: number; // kept for compatibility; no longer shown in UI
+  index_last_updated?: string | null;
 }) {
   const [chat_state, setChatState] = useState<ChatState>("EMPTY");
   const [chat_msgs, setChatMsgs] = useState<ChatMsg[]>([]);
@@ -51,6 +60,22 @@ export function ChatPane(props: {
   const [sending, setSending] = useState<boolean>(false);
 
   const transcript_ref = useRef<HTMLDivElement | null>(null);
+
+  function format_dt_uk(iso: string | null | undefined): string {
+    if (!iso) return "—";
+    try {
+      const [datePart, timePartRaw] = iso.split("T");
+      if (!datePart) return iso;
+
+      const [yyyy, mm, dd] = datePart.split("-");
+      const timePart = (timePartRaw || "").slice(0, 5); // HH:MM
+      if (!yyyy || !mm || !dd) return iso;
+
+      return `${dd}/${mm}/${yyyy} ${timePart || ""}`.trim();
+    } catch {
+      return iso;
+    }
+  }
 
   function scroll_to_bottom() {
     const el = transcript_ref.current;
@@ -120,6 +145,38 @@ export function ChatPane(props: {
     });
   }
 
+  function looks_like_unknown_answer(a: string): boolean {
+    const s = (a || "").trim().toLowerCase();
+    if (!s) return true;
+    if (s === "i don't know" || s === "i dont know") return true;
+    if (s === "i do not know") return true;
+    if (s === "unknown") return true;
+    if (s.startsWith("i don't know")) return true;
+    if (s.startsWith("i do not know")) return true;
+    return false;
+  }
+
+  function make_friendly_unknown(q: string): string {
+    const cleaned = (q || "").trim();
+    return (
+      "I couldn’t find anything relevant in your indexed emails for that question. " +
+      "Try being more specific—for example: who sent it, an approximate date range, " +
+      "a keyword from the subject/body, or which folder it might be in.\n\n" +
+      `Your question: “${cleaned || "(empty)"}”`
+    );
+  }
+
+  function start_dots_animation(msgId: string, base: string) {
+    let i = 0;
+    const frames = ["", ".", "..", "..."];
+    patch_msg(msgId, { text: base + frames[0], sources: [] });
+    const handle = window.setInterval(() => {
+      i = (i + 1) % frames.length;
+      patch_msg(msgId, { text: base + frames[i], sources: [] });
+    }, 350);
+    return () => window.clearInterval(handle);
+  }
+
   async function open_email(message_id: string, fallback_weblink: string) {
     if (!props.token_ok || !props.access_token) {
       window.open(fallback_weblink, "_blank", "noopener,noreferrer");
@@ -174,22 +231,33 @@ export function ChatPane(props: {
     };
     append_msg(placeholder);
 
-    // staged feedback
-    const t1 = setTimeout(() => patch_msg(assistantId, { text: "Reading top matches…", sources: [] }), 700);
-    const t2 = setTimeout(() => patch_msg(assistantId, { text: "Drafting answer…", sources: [] }), 1400);
+    // staged feedback (with a lightweight animated dots effect)
+    const t1 = setTimeout(() => patch_msg(assistantId, { text: "Reading top matches…", sources: [] }), 650);
+
+    // FIX: avoid “possibly null / not callable” issues under stricter TS configs
+    let stopDots: (() => void) | undefined;
+    const t2 = setTimeout(() => {
+      stopDots = start_dots_animation(assistantId, "Drafting answer");
+    }, 1200);
 
     try {
       const res = await ask_question(props.access_token, q, 4);
       const answer = String(res.answer || "");
       const allSources = (res.sources || []) as Source[];
-      const topSources = allSources.slice(0, 3);
 
-      patch_msg(assistantId, { text: answer || "No answer.", sources: topSources, sources_open: false });
+      // Always cap sources to 3, but suppress if we did not find an answer.
+      if (looks_like_unknown_answer(answer)) {
+        patch_msg(assistantId, { text: make_friendly_unknown(q), sources: [], sources_open: false });
+      } else {
+        const topSources = allSources.slice(0, 3);
+        patch_msg(assistantId, { text: answer || "", sources: topSources, sources_open: false });
+      }
     } catch {
       patch_msg(assistantId, { text: "Query failed. Please try again.", sources: [] });
     } finally {
       clearTimeout(t1);
       clearTimeout(t2);
+      if (stopDots) stopDots();
       setSending(false);
     }
   }
@@ -243,9 +311,9 @@ export function ChatPane(props: {
                 const isUser = m.role === "user";
                 const srcs = (m.sources || []).slice(0, 3);
                 return (
-                  <div key={m.id} className={`op-bubble ${isUser ? "op-bubbleUser" : ""}`}>
+                  <div key={m.id} className={`op-bubble ${isUser ? "op-bubbleUser" : "op-bubbleAssistant"}`}>
                     <div className="op-bubbleHeader">
-                      <div className="op-bubbleRole">{isUser ? "You" : "Assistant"}</div>
+                      <div className="op-bubbleRole">{isUser ? "Question" : "Answer"}</div>
                       <div className="op-bubbleTime">{format_time(m.created_at_ms)}</div>
                     </div>
 
@@ -272,7 +340,9 @@ export function ChatPane(props: {
                                 <div className="op-sourceTop">
                                   <div style={{ minWidth: 0 }}>
                                     <div className="op-itemTitle">{truncate(s.subject || "(no subject)", 52)}</div>
-                                    <div className="op-itemMeta">{truncate(s.sender, 30)} • {truncate(s.received_dt, 26)}</div>
+                                    <div className="op-itemMeta">
+                                      {truncate(s.sender, 30)} • {truncate(s.received_dt, 26)}
+                                    </div>
                                   </div>
                                   <button className="op-sourceLink" onClick={() => open_email(s.message_id, s.weblink)}>
                                     Open
@@ -296,12 +366,19 @@ export function ChatPane(props: {
             className="op-textarea"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter sends; Shift+Enter inserts newline
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (!sending && draft.trim()) send();
+              }
+            }}
             rows={2}
             placeholder="Ask a question…"
             disabled={sending}
           />
           <div className="op-row" style={{ justifyContent: "space-between", marginTop: 8 }}>
-            <div className="op-muted">{sending ? "Working…" : `Indexed emails: ${props.index_count}`}</div>
+            <div className="op-muted">{sending ? "Working…" : `Last updated: ${format_dt_uk(props.index_last_updated)}`}</div>
             <button className="op-btn op-btnPrimary" onClick={send} disabled={!draft.trim() || sending}>
               Send
             </button>

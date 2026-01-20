@@ -17,21 +17,21 @@ type Folder = {
   totalItemCount?: number;
 };
 
-function format_dt_uk(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  try {
-    const [datePart, timePartRaw] = iso.split("T");
-    if (!datePart) return iso;
+// function format_dt_uk(iso: string | null | undefined): string {
+//   if (!iso) return "—";
+//   try {
+//     const [datePart, timePartRaw] = iso.split("T");
+//     if (!datePart) return iso;
 
-    const [yyyy, mm, dd] = datePart.split("-");
-    const timePart = (timePartRaw || "").slice(0, 5); // HH:MM
-    if (!yyyy || !mm || !dd) return iso;
+//     const [yyyy, mm, dd] = datePart.split("-");
+//     const timePart = (timePartRaw || "").slice(0, 5); // HH:MM
+//     if (!yyyy || !mm || !dd) return iso;
 
-    return `${dd}/${mm}/${yyyy} ${timePart || ""}`.trim();
-  } catch {
-    return iso;
-  }
-}
+//     return `${dd}/${mm}/${yyyy} ${timePart || ""}`.trim();
+//   } catch {
+//     return iso;
+//   }
+// }
 
 export default function TaskPaneView() {
   const [screen, setScreen] = useState<Screen>("SIGNIN");
@@ -78,9 +78,7 @@ export default function TaskPaneView() {
       return;
     }
 
-    // IMPORTANT CHANGE:
     // Only auto-navigate during startup/sign-in scenarios.
-    // Do NOT auto-push INDEX -> CHAT after user actions (e.g. cancel).
     if (opts.autoNavigate) {
       if (screen === "SIGNIN") setScreen("CHAT");
     }
@@ -93,7 +91,7 @@ export default function TaskPaneView() {
 
   // Called by IndexManager after indexing/cancel/clear etc.
   async function on_index_changed() {
-    // IMPORTANT CHANGE: do not auto-navigate to CHAT on an index refresh
+    // do not auto-navigate to CHAT on an index refresh
     await refresh_index_status(null, { autoNavigate: false });
   }
 
@@ -120,7 +118,6 @@ export default function TaskPaneView() {
       const who = await get_signed_in_user();
       setUserLabel(who?.username || who?.name || "");
 
-      // startup can auto-navigate
       await refresh_index_status(null, { autoNavigate: true });
       await refresh_folders(token);
     } catch (e: any) {
@@ -152,7 +149,6 @@ export default function TaskPaneView() {
       const who = await get_signed_in_user();
       setUserLabel(who?.username || who?.name || "");
 
-      // sign-in can auto-navigate
       await refresh_index_status(null, { autoNavigate: true });
       await refresh_folders(token);
     } catch (e: any) {
@@ -209,21 +205,12 @@ export default function TaskPaneView() {
   function render_header() {
     if (screen === "SIGNIN") return null;
 
-    const indexedCount = index_status?.indexed_count ?? 0;
-    const lastUpdated = format_dt_uk(index_status?.last_updated);
-
     return (
       <div className="op-header">
         <div className="op-subline">
           {token_ok && user_label ? (
             <span>
               <strong>Signed in:</strong> {user_label}
-            </span>
-          ) : null}
-
-          {token_ok ? (
-            <span>
-              • <strong>Indexed emails:</strong> {indexedCount} • <strong>Last updated:</strong> {lastUpdated}
             </span>
           ) : null}
 
@@ -271,7 +258,13 @@ export default function TaskPaneView() {
 
     return (
       <div className="op-fit" style={{ height: "100%" }}>
-        <ChatPane token_ok={token_ok} access_token={access_token} index_exists={index_exists} index_count={index_status?.indexed_count || 0} />
+        <ChatPane
+          token_ok={token_ok}
+          access_token={access_token}
+          index_exists={index_exists}
+          index_count={index_status?.indexed_count || 0}
+          index_last_updated={index_status?.last_updated || null}
+        />
       </div>
     );
   }

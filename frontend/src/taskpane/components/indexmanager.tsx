@@ -556,19 +556,22 @@ export function IndexManager(props: {
         )}
 
         {ingest_step === "COMPLETE" && (
-          <div className="op-fit">
-            <IngestResult
-              kind="COMPLETE"
-              summary={
-                (complete_summary || "Indexing completed successfully.") +
-                (props.index_status?.last_updated ? ` • Updated: ${fmt_dt(props.index_status.last_updated)}` : "")
-              }
-              onOpenClear={() => setView("CLEAR_STORAGE")}
-              onReturnToSelect={() => setIngestStep("SELECT")}
-              onIndexMore={() => setIngestStep("SELECT")}
-            />
-          </div>
-        )}
+        <div className="op-fit">
+          <IngestResult
+            kind="COMPLETE"
+            summary={
+              (complete_summary || "Indexing completed successfully.") +
+              (props.index_status?.last_updated ? ` • Updated: ${fmt_dt(props.index_status.last_updated)}` : "")
+            }
+            onOpenClear={() => setView("CLEAR_STORAGE")}
+            onReturnToSelect={() => setIngestStep("SELECT")}
+            onIndexMore={() => setIngestStep("SELECT")}
+
+            // NEW: show "Go to chat" action after indexing
+            onGoChat={() => props.onNavigate?.("CHAT")}
+          />
+        </div>
+      )}
       </div>
     </div>
   );
