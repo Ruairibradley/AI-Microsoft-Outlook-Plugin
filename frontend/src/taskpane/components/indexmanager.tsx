@@ -5,7 +5,6 @@ import { run_ingestion } from "../ingest/runner";
 import type { Folder, GraphMessage, IngestMode, IngestStep, Phase } from "../ingest/types";
 
 import { ClearModal } from "./clearmodal";
-import { FolderPicker } from "./folderpicker";
 import { EmailPicker } from "./emailpicker";
 import { IngestPreview } from "./ingestpreview";
 import { IngestProgress } from "./ingestprogress";
@@ -33,18 +32,9 @@ export function IndexManager(props: {
 
   // ---------- wizard state ----------
   const [ingest_step, setIngestStep] = useState<IngestStep>("SELECT");
-  const [ingest_mode, setIngestMode] = useState<IngestMode>("FOLDERS");
 
-  // folder selection
-  const [folder_filter, setFolderFilter] = useState("");
-  const [selected_folder_ids, setSelectedFolderIds] = useState<Set<string>>(new Set());
-
-  const [folder_limit_input, setFolderLimitInput] = useState<string>("100");
-  const folder_limit = useMemo(() => {
-    const n = Number(folder_limit_input);
-    if (!Number.isFinite(n) || n <= 0) return 100;
-    return Math.max(1, Math.min(2000, Math.floor(n)));
-  }, [folder_limit_input]);
+  // Always EMAILS mode in the simplified UX
+  const ingest_mode: IngestMode = "EMAILS";
 
   // email selection
   const [email_folder_id, setEmailFolderId] = useState<string>("");
@@ -69,6 +59,7 @@ export function IndexManager(props: {
 
   const pause_requested_ref = useRef<boolean>(false);
   const pause_resolve_ref = useRef<null | ((v: "continue" | "cancel") => void)>(null);
+
   function wait_for_decision(): Promise<"continue" | "cancel"> {
     return new Promise((resolve) => {
       pause_resolve_ref.current = resolve;
@@ -104,37 +95,17 @@ export function IndexManager(props: {
   }, [messages, messages_filter]);
 
   const selection_summary = useMemo(() => {
-    const folderCount = selected_folder_ids.size;
     const emailCount = selected_email_ids.size;
-
-    const approxFolderTotal = (() => {
-      if (!folderCount) return 0;
-      const selected = props.folders.filter((f) => selected_folder_ids.has(f.id));
-      return selected.reduce((sum, f) => sum + Math.min(folder_limit, f.totalItemCount || folder_limit), 0);
-    })();
-
-    const effectiveTotal = ingest_mode === "FOLDERS" ? approxFolderTotal : emailCount;
-
+    const effectiveTotal = emailCount;
     return {
-      folderCount,
       emailCount,
-      approxFolderTotal,
       effectiveTotal,
       large: effectiveTotal >= 200
     };
-  }, [selected_folder_ids, selected_email_ids, props.folders, ingest_mode, folder_limit]);
+  }, [selected_email_ids]);
 
   function can_continue_from_select(): boolean {
-    if (ingest_mode === "FOLDERS") return selected_folder_ids.size > 0;
     return selected_email_ids.size > 0;
-  }
-
-  function toggle_folder(id: string) {
-    setSelectedFolderIds((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
   }
 
   function toggle_email(id: string) {
@@ -156,20 +127,7 @@ export function IndexManager(props: {
     setSelectedEmailIds(new Set());
     setMessagesFilter("");
     setErr("");
-
-    if (!folderId) return;
-    if (!props.token_ok || !props.access_token) return;
-
-    setBusy("Loading emails…");
-    try {
-      const data = await get_messages(props.access_token, folderId, 25);
-      setMessages((data.value || []) as GraphMessage[]);
-      setMessagesNextLink((data as any)["@odata.nextLink"] || null);
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally {
-      setBusy("");
-    }
+    setBusy("");
   }
 
   async function load_more_messages() {
@@ -190,6 +148,116 @@ export function IndexManager(props: {
     }
   }
 
+  async function ensure_messages_loaded_for_specific() {
+    if (messages.length > 0) return;
+    if (!props.token_ok || !props.access_token) return;
+    if (!email_folder_id) {
+      setErr("Select a folder first.");
+      return;
+    }
+
+    setBusy("Loading emails…");
+    setErr("");
+    try {
+      const data = await get_messages(props.access_token, email_folder_id, 25);
+      setMessages((data.value || []) as GraphMessage[]);
+      setMessagesNextLink((data as any)["@odata.nextLink"] || null);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function select_most_recent(n: number) {
+    setErr("");
+    if (!props.token_ok || !props.access_token) return;
+    if (!email_folder_id) {
+      setErr("Select a folder first.");
+      return;
+    }
+
+    const target = Math.max(1, Math.min(5000, Math.floor(n || 1)));
+
+    setBusy(`Selecting most recent ${target}…`);
+    try {
+      let localMessages: GraphMessage[] = [];
+      let next: string | null = null;
+
+      const firstTop = Math.min(100, target);
+      const first = await get_messages(props.access_token, email_folder_id, firstTop);
+      localMessages = (first.value || []) as GraphMessage[];
+      next = (first as any)["@odata.nextLink"] || null;
+
+      while (localMessages.length < target && next) {
+        const data = await get_messages_page(props.access_token, { next_link: next, top: 100 });
+        const page = (data.value || []) as GraphMessage[];
+        localMessages = [...localMessages, ...page];
+        next = (data as any)["@odata.nextLink"] || null;
+
+        setBusy(`Selecting most recent ${target}… (${Math.min(localMessages.length, target)}/${target})`);
+      }
+
+      const UI_LIMIT = 250;
+      setMessages(localMessages.slice(0, UI_LIMIT));
+      setMessagesNextLink(next);
+
+      const ids = localMessages.slice(0, target).map((m) => m.id);
+      setSelectedEmailIds(new Set(ids));
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function select_all_in_folder() {
+    setErr("");
+    if (!props.token_ok || !props.access_token) return;
+    if (!email_folder_id) {
+      setErr("Select a folder first.");
+      return;
+    }
+
+    setBusy("Selecting all emails in folder…");
+    try {
+      const allIds = new Set<string>();
+
+      const UI_LIMIT = 250;
+      let uiMessages: GraphMessage[] = [];
+
+      const first = await get_messages(props.access_token, email_folder_id, 100);
+      const firstPage = (first.value || []) as GraphMessage[];
+      firstPage.forEach((m) => allIds.add(m.id));
+      uiMessages = firstPage.slice(0, UI_LIMIT);
+
+      let next = (first as any)["@odata.nextLink"] || null;
+      setBusy(`Selecting all emails in folder… (${allIds.size})`);
+
+      while (next) {
+        const data = await get_messages_page(props.access_token, { next_link: next, top: 100 });
+        const page = (data.value || []) as GraphMessage[];
+        page.forEach((m) => allIds.add(m.id));
+
+        if (uiMessages.length < UI_LIMIT) {
+          const remaining = UI_LIMIT - uiMessages.length;
+          uiMessages = [...uiMessages, ...page.slice(0, remaining)];
+        }
+
+        next = (data as any)["@odata.nextLink"] || null;
+        setBusy(`Selecting all emails in folder… (${allIds.size})`);
+      }
+
+      setMessages(uiMessages);
+      setMessagesNextLink(null);
+      setSelectedEmailIds(allIds);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setBusy("");
+    }
+  }
+
   function go_preview() {
     setErr("");
     setCancelSummary("");
@@ -200,10 +268,10 @@ export function IndexManager(props: {
 
   function back_to_select() {
     setErr("");
-    setCancelSummary("");
     setIngestStep("SELECT");
   }
 
+  // ---------- cancel flow ----------
   function cancel_clicked() {
     pause_requested_ref.current = true;
     setCancelConfirmOpen(true);
@@ -221,9 +289,13 @@ export function IndexManager(props: {
     cancel_requested_ref.current = true;
     pause_requested_ref.current = false;
 
+    // Resolve the pause gate as "cancel"
     pause_resolve_ref.current?.("cancel");
     pause_resolve_ref.current = null;
 
+    // Terminal cancelled state — MUST persist until user chooses next action
+    setBusy("");
+    setErr("");
     setCancelSummary("Indexing cancelled. Some emails may already be indexed.");
     setIngestStep("CANCELLED");
   }
@@ -236,6 +308,7 @@ export function IndexManager(props: {
     setErr("");
     setCancelSummary("");
     setCompleteSummary("");
+
     cancel_requested_ref.current = false;
     pause_requested_ref.current = false;
     pause_resolve_ref.current = null;
@@ -255,8 +328,8 @@ export function IndexManager(props: {
         selected_email_ids: Array.from(selected_email_ids),
 
         folders: props.folders,
-        selected_folder_ids: Array.from(selected_folder_ids),
-        folder_limit,
+        selected_folder_ids: [],
+        folder_limit: 0,
 
         onPhase: setRunPhase,
         onTotal: setRunTotal,
@@ -272,28 +345,37 @@ export function IndexManager(props: {
         min_phase_ms: 250
       });
 
-      if (cancel_requested_ref.current) throw new Error("CANCELLED_BY_USER");
+      // If user cancelled during/after ingestion, treat as cancelled terminal state
+      if (cancel_requested_ref.current) {
+        await props.onIndexChanged();
+        setBusy("");
+        setErr("");
+        setCancelSummary("Indexing cancelled. Some emails may already be indexed.");
+        setIngestStep("CANCELLED");
+        return; // critical: do not fall through
+      }
 
       await props.onIndexChanged();
 
-      const summary =
-        ingest_mode === "EMAILS"
-          ? `Indexed ${res.message_ids.length} selected emails.`
-          : `Indexed ${res.message_ids.length} emails from selected folder(s).`;
-
-      setCompleteSummary(summary);
+      setCompleteSummary(`Indexed ${res.message_ids.length} selected emails.`);
       setIngestStep("COMPLETE");
     } catch (e: any) {
       const msg = String(e?.message || e);
-      if (msg === "CANCELLED_BY_USER") {
+
+      // IMPORTANT: cancellation must not fall through to SELECT
+      if (msg === "CANCELLED_BY_USER" || cancel_requested_ref.current) {
         await props.onIndexChanged();
+        setBusy("");
+        setErr("");
         setCancelSummary("Indexing cancelled. Some emails may already be indexed.");
         setIngestStep("CANCELLED");
-        return;
+        return; // critical: prevents overwriting CANCELLED with SELECT
       }
+
       setErr(msg);
       setIngestStep("SELECT");
     } finally {
+      // Do NOT touch ingest_step here.
       pause_requested_ref.current = false;
       pause_resolve_ref.current = null;
     }
@@ -375,38 +457,11 @@ export function IndexManager(props: {
   // ---------- MAIN VIEW ----------
   function render_select_step() {
     return (
-      <div className="op-fit">
-        {/* Single header only (new copy). No “Emails / …” header rendered anywhere else in this file. */}
+      <div className="op-fit" style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
         <div style={{ marginBottom: 8 }}>
-          <div className="op-cardTitle">CANARY 123 Choose emails to search</div>
-          <div className="op-muted">Pick folders or specific emails to include.</div>
-
+          <div className="op-cardTitle">Choose emails to search</div>
+          <div className="op-muted">Pick a folder, then choose how to select emails.</div>
           {busy ? <div className="op-helpNote">{busy}</div> : null}
-
-          {/* Intentionally NO “No emails indexed yet” callout here */}
-
-          <div className="op-row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
-            <button className="op-btn op-btnDanger" onClick={() => setView("CLEAR_STORAGE")}>
-              Clear storage
-            </button>
-
-            <div className="op-seg" role="tablist" aria-label="Selection mode">
-              <button
-                className="op-segBtn"
-                aria-selected={ingest_mode === "FOLDERS"}
-                onClick={() => setIngestMode("FOLDERS")}
-              >
-                Folders
-              </button>
-              <button
-                className="op-segBtn"
-                aria-selected={ingest_mode === "EMAILS"}
-                onClick={() => setIngestMode("EMAILS")}
-              >
-                Emails
-              </button>
-            </div>
-          </div>
 
           {err ? (
             <div className="op-banner op-bannerDanger" style={{ marginTop: 10 }}>
@@ -416,28 +471,14 @@ export function IndexManager(props: {
           ) : null}
         </div>
 
-        {ingest_mode === "FOLDERS" ? (
-          <FolderPicker
-            folders={props.folders}
-            folder_filter={folder_filter}
-            set_folder_filter={setFolderFilter}
-            folder_limit_input={folder_limit_input}
-            set_folder_limit_input={setFolderLimitInput}
-            folder_limit_value={folder_limit}
-            selected_folder_ids={selected_folder_ids}
-            toggle_folder={toggle_folder}
-            approx_total={selection_summary.effectiveTotal}
-            folder_count={selection_summary.folderCount}
-            is_large={selection_summary.large}
-            large_warning_text={consent_copy.largeWarning}
-          />
-        ) : (
+        <div style={{ flex: "1 1 auto", minHeight: 0, overflow: "auto", paddingBottom: 6 }}>
           <EmailPicker
             token_ok={props.token_ok}
             folders={props.folders}
             email_folder_id={email_folder_id}
             set_email_folder_id={setEmailFolderId}
-            on_load_folder={load_email_folder}
+            on_folder_changed={load_email_folder}
+            ensure_loaded_for_specific={ensure_messages_loaded_for_specific}
             messages_filter={messages_filter}
             set_messages_filter={setMessagesFilter}
             messages={messages}
@@ -450,12 +491,16 @@ export function IndexManager(props: {
             selected_count={selection_summary.emailCount}
             is_large={selection_summary.large}
             large_warning_text={consent_copy.largeWarning}
+            on_select_all={select_all_in_folder}
+            on_select_most_recent={select_most_recent}
           />
-        )}
+        </div>
 
-        <div className="op-spacer" />
+        <div className="op-row" style={{ justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+          <button className="op-btn op-btnDanger" onClick={() => setView("CLEAR_STORAGE")}>
+            Clear storage
+          </button>
 
-        <div className="op-row" style={{ justifyContent: "flex-end" }}>
           <button className="op-btn op-btnPrimary" disabled={!can_continue_from_select()} onClick={go_preview}>
             Continue
           </button>
@@ -466,7 +511,6 @@ export function IndexManager(props: {
 
   return (
     <div className="op-card op-fit">
-      {/* Important: no op-cardHeader here, to avoid the duplicate “Emails …” block you are seeing */}
       <div className="op-cardBody op-fitBody">
         {ingest_step === "SELECT" && render_select_step()}
 
@@ -474,7 +518,7 @@ export function IndexManager(props: {
           <IngestPreview
             ingest_mode={ingest_mode}
             approx_total={selection_summary.effectiveTotal}
-            folder_limit={folder_limit}
+            folder_limit={0}
             is_large={selection_summary.large}
             large_warning_text={consent_copy.largeWarning}
             consent_bullets={consent_copy.bullets}
@@ -523,22 +567,6 @@ export function IndexManager(props: {
               onReturnToSelect={() => setIngestStep("SELECT")}
               onIndexMore={() => setIngestStep("SELECT")}
             />
-
-            <div className="op-spacer" />
-
-            <div className="op-row">
-              <button
-                className="op-btn op-btnPrimary"
-                onClick={() => props.onNavigate?.("CHAT")}
-                disabled={(props.index_status?.indexed_count || 0) <= 0}
-                title={(props.index_status?.indexed_count || 0) <= 0 ? "Index emails first" : "Go to chat"}
-              >
-                Go to chat
-              </button>
-              <button className="op-btn" onClick={() => setIngestStep("SELECT")}>
-                Index more
-              </button>
-            </div>
           </div>
         )}
       </div>

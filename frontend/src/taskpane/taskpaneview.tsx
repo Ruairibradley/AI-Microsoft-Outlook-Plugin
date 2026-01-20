@@ -19,8 +19,6 @@ type Folder = {
 
 function format_dt_uk(iso: string | null | undefined): string {
   if (!iso) return "—";
-  // Graph/metadata is usually "YYYY-MM-DDTHH:MM:SS" (no timezone)
-  // We format as DD/MM/YYYY HH:MM to match your spec.
   try {
     const [datePart, timePartRaw] = iso.split("T");
     if (!datePart) return iso;
@@ -59,19 +57,33 @@ export default function TaskPaneView() {
 
   const index_exists = (index_status?.indexed_count || 0) > 0;
 
-  async function refresh_index_status(nextPreferredScreen: Screen | null = null) {
+  async function refresh_index_status(
+    nextPreferredScreen: Screen | null = null,
+    opts: { autoNavigate?: boolean } = { autoNavigate: true }
+  ) {
     const st = (await get_index_status()) as IndexStatus;
     setIndexStatus(st);
 
     const exists = (st?.indexed_count || 0) > 0;
 
     if (!exists) {
+      // If nothing is indexed, always keep user on INDEX
       setScreen("INDEX");
       return;
     }
 
-    if (nextPreferredScreen) setScreen(nextPreferredScreen);
-    else if (screen === "SIGNIN" || screen === "INDEX") setScreen("CHAT");
+    // Explicit navigation request wins
+    if (nextPreferredScreen) {
+      setScreen(nextPreferredScreen);
+      return;
+    }
+
+    // IMPORTANT CHANGE:
+    // Only auto-navigate during startup/sign-in scenarios.
+    // Do NOT auto-push INDEX -> CHAT after user actions (e.g. cancel).
+    if (opts.autoNavigate) {
+      if (screen === "SIGNIN") setScreen("CHAT");
+    }
   }
 
   async function refresh_folders(token: string) {
@@ -79,8 +91,10 @@ export default function TaskPaneView() {
     setFolders((data.folders || []) as Folder[]);
   }
 
+  // Called by IndexManager after indexing/cancel/clear etc.
   async function on_index_changed() {
-    await refresh_index_status(null);
+    // IMPORTANT CHANGE: do not auto-navigate to CHAT on an index refresh
+    await refresh_index_status(null, { autoNavigate: false });
   }
 
   // ---------- startup ----------
@@ -106,7 +120,8 @@ export default function TaskPaneView() {
       const who = await get_signed_in_user();
       setUserLabel(who?.username || who?.name || "");
 
-      await refresh_index_status();
+      // startup can auto-navigate
+      await refresh_index_status(null, { autoNavigate: true });
       await refresh_folders(token);
     } catch (e: any) {
       setTokenOk(false);
@@ -137,7 +152,8 @@ export default function TaskPaneView() {
       const who = await get_signed_in_user();
       setUserLabel(who?.username || who?.name || "");
 
-      await refresh_index_status();
+      // sign-in can auto-navigate
+      await refresh_index_status(null, { autoNavigate: true });
       await refresh_folders(token);
     } catch (e: any) {
       setTokenOk(false);
@@ -191,7 +207,6 @@ export default function TaskPaneView() {
   }
 
   function render_header() {
-    // Header should appear only once logged in
     if (screen === "SIGNIN") return null;
 
     const indexedCount = index_status?.indexed_count ?? 0;
@@ -201,7 +216,9 @@ export default function TaskPaneView() {
       <div className="op-header">
         <div className="op-subline">
           {token_ok && user_label ? (
-            <span><strong>Signed in:</strong> {user_label}</span>
+            <span>
+              <strong>Signed in:</strong> {user_label}
+            </span>
           ) : null}
 
           {token_ok ? (
@@ -233,13 +250,7 @@ export default function TaskPaneView() {
   }
 
   function render_signin() {
-    return (
-      <WelcomeSignIn
-        onSignIn={() => sign_in_clicked()}
-        error={error}
-        error_details={error_details}
-      />
-    );
+    return <WelcomeSignIn onSignIn={() => sign_in_clicked()} error={error} error_details={error_details} />;
   }
 
   function render_index_screen() {
@@ -260,12 +271,7 @@ export default function TaskPaneView() {
 
     return (
       <div className="op-fit" style={{ height: "100%" }}>
-        <ChatPane
-          token_ok={token_ok}
-          access_token={access_token}
-          index_exists={index_exists}
-          index_count={index_status?.indexed_count || 0}
-        />
+        <ChatPane token_ok={token_ok} access_token={access_token} index_exists={index_exists} index_count={index_status?.indexed_count || 0} />
       </div>
     );
   }
