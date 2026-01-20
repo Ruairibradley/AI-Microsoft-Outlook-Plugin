@@ -119,6 +119,78 @@
       </bt:LongStrings>
     </Resources>
 
+    <!--
+      Pinnable task pane support is defined in the VersionOverrides v1.1 schema.
+      Outlook expects a VersionOverridesV1_1 element nested inside the v1.0 element.
+    -->
+    <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1"
+                      xsi:type="VersionOverridesV1_1">
+
+      <Hosts>
+        <Host xsi:type="MailHost">
+          <DesktopFormFactor>
+
+            <FunctionFile resid="functionFile"/>
+
+            <ExtensionPoint xsi:type="MessageReadCommandSurface">
+              <OfficeTab id="TabDefault">
+
+                <Group id="PrivacyAssistant.Group">
+                  <Label resid="groupLabel"/>
+
+                  <Control xsi:type="Button" id="PrivacyAssistant.Button">
+                    <Label resid="cmdLabel"/>
+
+                    <Supertip>
+                      <Title resid="cmdLabel"/>
+                      <Description resid="cmdDesc"/>
+                    </Supertip>
+
+                    <Icon>
+                      <bt:Image size="16" resid="icon16"/>
+                      <bt:Image size="32" resid="icon32"/>
+                      <bt:Image size="80" resid="icon80"/>
+                    </Icon>
+
+                    <Action xsi:type="ShowTaskpane">
+                      <SourceLocation resid="taskpaneUrl"/>
+                      <SupportsPinning>true</SupportsPinning>
+                    </Action>
+                  </Control>
+
+                </Group>
+
+              </OfficeTab>
+            </ExtensionPoint>
+
+          </DesktopFormFactor>
+        </Host>
+      </Hosts>
+
+      <Resources>
+        <bt:Images>
+          <bt:Image id="icon16" DefaultValue="https://localhost:8443/assets/icon-16.png"/>
+          <bt:Image id="icon32" DefaultValue="https://localhost:8443/assets/icon-32.png"/>
+          <bt:Image id="icon80" DefaultValue="https://localhost:8443/assets/icon-80.png"/>
+        </bt:Images>
+
+        <bt:Urls>
+          <bt:Url id="taskpaneUrl" DefaultValue="https://localhost:8443/"/>
+          <bt:Url id="functionFile" DefaultValue="https://localhost:8443/function-file.html"/>
+        </bt:Urls>
+
+        <bt:ShortStrings>
+          <bt:String id="groupLabel" DefaultValue="Privacy"/>
+          <bt:String id="cmdLabel" DefaultValue="Privacy Assistant"/>
+        </bt:ShortStrings>
+
+        <bt:LongStrings>
+          <bt:String id="cmdDesc" DefaultValue="Open the local, privacy-first assistant sidebar."/>
+        </bt:LongStrings>
+      </Resources>
+
+    </VersionOverrides>
+
   </VersionOverrides>
 
 </OfficeApp>
